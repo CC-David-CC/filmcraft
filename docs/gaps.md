@@ -238,7 +238,7 @@ platforms** G4, G9, G17; **performance** G16; **ecosystem** G11; **measurement**
 - **Missing:** Hindi, Arabic (no RTL interface layout or catalog; the interface has Arabic and Hebrew
   fallback fonts and shows captions in reading order, but other names and fields keep egui's
   left-to-right run order; Arabic titles reported broken, #395),
-  German beyond menus (#490), Korean (#508; needs Hangul fonts in craft-fonts),
+  Korean (#508; needs Hangul fonts in craft-fonts),
   Vietnamese; Premiere also ships Russian. Engine errors,
   CLI and MCP stay English. No language has a recorded native-speaker review.
 - **Done:** Indonesian (#867): `id.tsv` has every entry of the Spanish catalog (~100%), in Edit ▸
@@ -247,6 +247,9 @@ platforms** G4, G9, G17; **performance** G16; **ecosystem** G11; **measurement**
 - **Done:** Italian: `it.tsv` has every entry of the Spanish catalog (~100%), in Edit ▸ Language,
   Settings ▸ General and the native macOS menu; System Language picks it for `it-*` locales.
   Native-speaker review welcome.
+- **Done:** German: `de.tsv` has every entry of the Spanish catalog (~100%), beyond the menus of
+  #630 (panels, dialogs, effects and their parameters, settings, status messages). The menus are
+  native-reviewed; review of the rest welcome.
 - **Estimate:** 150–230 h. Doc: [localization-parity.md](localization-parity.md).
 
 ## G15. Interchange never validated in Avid / Pro Tools; slow XML import
