@@ -687,6 +687,8 @@ fn new_from_template(s: &mut Session, p: &Value) -> Result<Value> {
         s.previews.reset_temp();
     }
     s.media.clear();
+    s.media.clear_stored();
+    s.media.add_stored(&s.project, Some(path.as_str()));
     s.revision += 1;
     s.saved_revision = s.revision;
     s.events.push(crate::Event::ProjectChanged { revision: s.revision });
@@ -960,10 +962,15 @@ pub fn scratch_paths(s: &Session) -> Value {
             .to_string(),
         None => same(&None),
     };
+    let scratch = |o: &Option<String>| {
+        trusted_scratch(o.as_deref(), s.path.as_deref(), &s.prefs.auto_save.scratch_folders)
+            .map(|d| d.to_string_lossy().to_string())
+            .unwrap_or_else(|| same(&None))
+    };
     json!({
-        "captured": {"setting": sc.captured, "path": same(&sc.captured)},
+        "captured": {"setting": sc.captured, "path": scratch(&sc.captured)},
         "videoPreviews": {"setting": sc.video_previews, "path": previews_dir(s).map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| same(&sc.video_previews))},
-        "audioPreviews": {"setting": sc.audio_previews, "path": same(&sc.audio_previews)},
+        "audioPreviews": {"setting": sc.audio_previews, "path": scratch(&sc.audio_previews)},
         "autoSave": {"setting": sc.auto_save, "path": auto_save},
     })
 }
@@ -988,14 +995,17 @@ pub fn previews_dir_for(project: &Project, path: &str, chosen: &[String]) -> std
 /// The Scratch Disks folder `dir` from the settings of the project saved at `project_path`, if
 /// FilmCraft may write there: a folder chosen in Project Settings ▸ Scratch Disks on this computer
 /// (`chosen`, kept in the preferences), or a folder inside the project's own folder. Other folders
-/// named in a project file, network shares and device paths give None: the default location.
+/// named in a project file, and paths [`crate::doc_path::resolve`] refuses (other computers,
+/// devices), give None: the default location.
 pub fn trusted_scratch(dir: Option<&str>, project_path: Option<&str>, chosen: &[String]) -> Option<std::path::PathBuf> {
-    let dir = dir.filter(|d| !d.is_empty() && !network_or_device(d))?;
+    let dir = dir.filter(|d| !d.is_empty())?;
+    let resolved = std::path::PathBuf::from(crate::doc_path::resolve(dir, project_path.map(std::path::Path::new)).ok()?);
     if chosen.iter().any(|c| c == dir) {
-        return Some(dir.into());
+        return Some(resolved);
     }
-    let root = std::path::Path::new(project_path?).parent().filter(|r| !r.as_os_str().is_empty())?;
-    inside(std::path::Path::new(dir), root).then(|| dir.into())
+    let project = std::path::absolute(project_path?).ok()?;
+    let root = project.parent().filter(|r| !r.as_os_str().is_empty())?;
+    inside(&resolved, root).then_some(resolved)
 }
 
 /// Whether `dir` lies inside `root`, also after following the links in the part that exists.
@@ -1013,18 +1023,6 @@ fn inside(dir: &std::path::Path, root: &std::path::Path) -> bool {
         (Ok(real), Ok(real_root)) => real.starts_with(real_root),
         _ => false,
     }
-}
-
-/// Network-share (`\\server\share`, `//server/share`) and device (`\\?\`, `\\.\`, `NUL`,
-/// `COM1`…) paths, on every platform.
-pub(crate) fn network_or_device(dir: &str) -> bool {
-    let d = dir.replace('\\', "/");
-    d.starts_with("//")
-        || d.split('/').any(|c| {
-            let stem = c.split('.').next().unwrap_or_default().trim_end().to_ascii_uppercase();
-            matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
-                || stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT")).is_some_and(|n| n.len() == 1 && n.bytes().all(|b| b.is_ascii_digit()))
-        })
 }
 
 /// Remember the Scratch Disks folders chosen in this session, so projects naming them may use
@@ -1050,7 +1048,7 @@ fn remember_scratch_folders(s: &mut Session, dirs: &[String]) {
 /// FilmCraft will not write to (see [`trusted_scratch`]).
 pub(crate) fn warn_untrusted_scratch(s: &mut Session) {
     let sc = &s.project.settings.scratch;
-    let ignored: Vec<String> = [&sc.auto_save, &sc.video_previews]
+    let ignored: Vec<String> = [&sc.auto_save, &sc.video_previews, &sc.captured, &sc.audio_previews]
         .into_iter()
         .filter_map(|d| d.as_deref().filter(|d| !d.is_empty()))
         .filter(|d| trusted_scratch(Some(d), s.path.as_deref(), &s.prefs.auto_save.scratch_folders).is_none())
@@ -1064,7 +1062,7 @@ pub(crate) fn warn_untrusted_scratch(s: &mut Session) {
     let list = ignored.join(", ");
     log::warn!("project scratch disks outside the project folder not used: {list}");
     s.toast(format!(
-        "Scratch Disks: not using {list} (outside the project folder and not chosen on this computer). Auto-saves and previews go to the default location; choose the folder in Project Settings ▸ Scratch Disks to use it."
+        "Scratch Disks: not using {list} (outside the project folder and not chosen on this computer). Auto-saves, previews and captured media go to the default location; choose the folder in Project Settings ▸ Scratch Disks to use it."
     ));
 }
 
@@ -1078,13 +1076,13 @@ fn project_settings_scratch(s: &mut Session, p: &Value) -> Result<Value> {
             None => {}
             Some(Value::Null) => *slot = None,
             Some(Value::String(x)) if x.is_empty() || x.eq_ignore_ascii_case("same as project") => *slot = None,
-            Some(Value::String(x)) if matches!(k, "videoPreviews" | "autoSave") && network_or_device(x) => {
+            Some(Value::String(x))
+                if matches!(crate::doc_path::resolve(x, s.path.as_deref().map(std::path::Path::new)), Err(crate::doc_path::NotFollowed::Refused(_))) =>
+            {
                 return Err(bad("file.projectSettings.scratchDisks", format!("`{k}` must be a folder on this computer, not a network share or device")));
             }
             Some(Value::String(x)) => {
-                if matches!(k, "videoPreviews" | "autoSave") {
-                    chosen.push(x.clone());
-                }
+                chosen.push(x.clone());
                 *slot = Some(x.clone());
             }
             Some(_) => return Err(bad("file.projectSettings.scratchDisks", format!("`{k}` is a folder path or null"))),

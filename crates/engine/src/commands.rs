@@ -700,6 +700,7 @@ fn import_source(
         v.frame_rate = crate::settings::timebase_rate(&s.prefs.media.indeterminate_timebase);
     }
     let path_s = path.to_string();
+    s.media.allow(path);
     let id = s.edit(&format!("Import {name}"), |p, _| {
         Ok(p.add_item(
             &name,
@@ -4356,6 +4357,7 @@ fn install_project(s: &mut Session, proj: filmcraft_project::Project, path: Opti
     s.media.set_use_proxies(proxies);
     s.offline = Default::default();
     let first = proj.sequences().next().map(|i| i.id);
+    s.media.add_stored(&proj, path.as_deref());
     s.project = std::sync::Arc::new(proj);
     s.history = Default::default();
     s.history.limit = 200;
