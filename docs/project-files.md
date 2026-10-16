@@ -131,6 +131,12 @@ deleted. Only files named exactly `<name>-<timestamp>.fcproj` are ever deleted. 
 ordinary project file: open it with File ▸ Open Project. `file.listAutoSaves` lists them, newest
 first.
 
+Project Settings ▸ Scratch Disks can send auto-saves (Project Auto Save) and render previews (Video
+Previews) to another folder. A folder named in a project file is used only when it is inside the
+project's own folder or was chosen in Scratch Disks on this computer (remembered in
+`autoSave.scratchFolders`). Otherwise FilmCraft uses the default location and says so when the
+project opens. Network shares and device paths are never used for these two.
+
 Preferences are stored in `<data dir>/preferences.json`. The `prefs.*` commands read and change them.
 
 ## Crash recovery

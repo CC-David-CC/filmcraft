@@ -229,3 +229,60 @@ fn journal_costs_the_ui_thread_only_a_handoff() {
     s.shutdown();
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Scratch Disks folders named in a project file are used only when they are inside the project's
+/// folder or were chosen on this computer: otherwise auto-saves and previews go to the default
+/// location, nothing is written to the named folder, and the user is told.
+#[test]
+fn project_scratch_folders_outside_the_project_are_not_used() {
+    let d = temp_dir("scratch-trust");
+    let outside = d.join("elsewhere");
+    let show = d.join("show");
+    std::fs::create_dir_all(&show).unwrap();
+    let proj = show.join("cut.fcproj").to_string_lossy().to_string();
+    let mut a = demo();
+    let named = outside.to_string_lossy().to_string();
+    a.edit("scratch", |p, _| {
+        p.settings.scratch.auto_save = Some(named.clone());
+        p.settings.scratch.video_previews = Some(named.clone());
+        Ok(())
+    })
+    .unwrap();
+    a.execute("file.saveAs", json!({"path": proj})).unwrap();
+    let _ = std::fs::remove_dir_all(&outside);
+
+    let mut s = Session::default();
+    start(&mut s, &d.join("data"));
+    s.execute("file.open", json!({"path": proj})).unwrap();
+    assert!(
+        s.drain_events().iter().any(|e| matches!(e, crate::Event::Toast { message, .. } if message.contains(&named))),
+        "the user is told the folder is not used"
+    );
+    assert_eq!(crate::project_tools::previews_dir(&s), Some(show.join("FilmCraft Previews").join("cut")));
+    s.execute("sequence.addEdit", json!({"seconds": 1.0})).unwrap();
+    let r = s.execute("file.autoSaveNow", json!({})).unwrap();
+    let written = std::path::PathBuf::from(r["path"].as_str().unwrap());
+    assert!(written.starts_with(show.join("Auto-Save")), "{}", written.display());
+    assert!(!outside.exists(), "nothing written to the folder the project names");
+
+    // A folder inside the project's folder is used as is.
+    let inner = show.join("Saves").to_string_lossy().to_string();
+    s.edit("scratch", |p, _| {
+        p.settings.scratch.auto_save = Some(inner.clone());
+        Ok(())
+    })
+    .unwrap();
+    s.sync_persistence();
+    let r = s.execute("file.autoSaveNow", json!({})).unwrap();
+    assert!(std::path::Path::new(r["path"].as_str().unwrap()).starts_with(&inner));
+
+    // Choosing the outside folder in Scratch Disks makes it usable; network shares never are.
+    s.execute("file.projectSettings.scratchDisks", json!({"autoSave": named})).unwrap();
+    let r = s.execute("file.autoSaveNow", json!({})).unwrap();
+    assert!(std::path::Path::new(r["path"].as_str().unwrap()).starts_with(&outside));
+    assert!(s.execute("file.projectSettings.scratchDisks", json!({"autoSave": r"\\server\share\saves"})).is_err());
+    assert!(crate::project_tools::trusted_scratch(Some(r"\\server\share"), Some(&proj), &[r"\\server\share".into()]).is_none());
+    assert!(crate::project_tools::trusted_scratch(Some(&format!("{}/../x", show.display())), Some(&proj), &[]).is_none());
+    s.shutdown();
+    let _ = std::fs::remove_dir_all(&d);
+}

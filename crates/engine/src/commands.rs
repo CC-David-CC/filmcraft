@@ -4365,7 +4365,7 @@ fn install_project(s: &mut Session, proj: filmcraft_project::Project, path: Opti
     if let Some(p) = &path
         && !cfg!(target_arch = "wasm32")
     {
-        s.previews.set_dir(Some(crate::project_tools::previews_dir_for(&s.project, p)));
+        s.previews.set_dir(Some(crate::project_tools::previews_dir_for(&s.project, p, &s.prefs.auto_save.scratch_folders)));
     }
     s.path = path;
     s.revision += 1;
@@ -4373,6 +4373,7 @@ fn install_project(s: &mut Session, proj: filmcraft_project::Project, path: Opti
     s.saved_revision = if clean { s.revision } else { 0 };
     s.loaded_schema = filmcraft_format::SCHEMA_VERSION;
     s.events.push(crate::Event::ProjectChanged { revision: s.revision });
+    crate::project_tools::warn_untrusted_scratch(s);
 }
 
 fn open_project(s: &mut Session, path: &str) -> Result<Value> {
@@ -4424,8 +4425,11 @@ fn recover(s: &mut Session, id: Option<&str>) -> Result<Value> {
 
 /// Where auto-saves of the current project go.
 fn auto_save_dir(s: &Session) -> std::path::PathBuf {
-    if let Some(d) = s.project.settings.scratch.auto_save.as_deref().filter(|d| !d.is_empty() && s.path.is_some()) {
-        return std::path::PathBuf::from(d);
+    if s.path.is_some()
+        && let Some(d) =
+            crate::project_tools::trusted_scratch(s.project.settings.scratch.auto_save.as_deref(), s.path.as_deref(), &s.prefs.auto_save.scratch_folders)
+    {
+        return d;
     }
     match (&s.path, &s.persistence) {
         (Some(p), _) => filmcraft_format::autosave::auto_save_dir(std::path::Path::new(p)),

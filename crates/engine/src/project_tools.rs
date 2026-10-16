@@ -953,33 +953,124 @@ pub fn scratch_paths(s: &Session) -> Value {
     let sc = &s.project.settings.scratch;
     let project_dir = s.path.as_deref().and_then(|p| std::path::Path::new(p).parent()).map(|d| d.to_string_lossy().to_string());
     let same = |o: &Option<String>| o.clone().or(project_dir.clone()).unwrap_or_else(|| "(data directory until the project is saved)".into());
+    let auto_save = match s.path.as_deref() {
+        Some(p) => trusted_scratch(sc.auto_save.as_deref(), Some(p), &s.prefs.auto_save.scratch_folders)
+            .unwrap_or_else(|| filmcraft_format::autosave::auto_save_dir(std::path::Path::new(p)))
+            .to_string_lossy()
+            .to_string(),
+        None => same(&None),
+    };
     json!({
         "captured": {"setting": sc.captured, "path": same(&sc.captured)},
         "videoPreviews": {"setting": sc.video_previews, "path": previews_dir(s).map(|d| d.to_string_lossy().to_string()).unwrap_or_else(|| same(&sc.video_previews))},
         "audioPreviews": {"setting": sc.audio_previews, "path": same(&sc.audio_previews)},
-        "autoSave": {"setting": sc.auto_save, "path": sc.auto_save.clone().or_else(|| s.path.as_deref().map(|p| filmcraft_format::autosave::auto_save_dir(std::path::Path::new(p)).to_string_lossy().to_string())).unwrap_or_else(|| same(&None))},
+        "autoSave": {"setting": sc.auto_save, "path": auto_save},
     })
 }
 
 /// Render previews folder of the open project: Scratch Disks ▸ Video Previews / `<project
 /// name>`, else `FilmCraft Previews/<project name>` next to the project (None while unsaved).
 pub fn previews_dir(s: &Session) -> Option<std::path::PathBuf> {
-    s.path.as_deref().map(|p| previews_dir_for(&s.project, p))
+    s.path.as_deref().map(|p| previews_dir_for(&s.project, p, &s.prefs.auto_save.scratch_folders))
 }
 
-/// [`previews_dir`] for `project` saved at `path`.
-pub fn previews_dir_for(project: &Project, path: &str) -> std::path::PathBuf {
-    match &project.settings.scratch.video_previews {
-        Some(d) if !d.is_empty() => {
+/// [`previews_dir`] for `project` saved at `path`; `chosen` as in [`trusted_scratch`].
+pub fn previews_dir_for(project: &Project, path: &str, chosen: &[String]) -> std::path::PathBuf {
+    match trusted_scratch(project.settings.scratch.video_previews.as_deref(), Some(path), chosen) {
+        Some(d) => {
             let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
-            std::path::Path::new(d).join(stem)
+            d.join(stem)
         }
-        _ => crate::previews::dir_for_project(path),
+        None => crate::previews::dir_for_project(path),
     }
+}
+
+/// The Scratch Disks folder `dir` from the settings of the project saved at `project_path`, if
+/// FilmCraft may write there: a folder chosen in Project Settings ▸ Scratch Disks on this computer
+/// (`chosen`, kept in the preferences), or a folder inside the project's own folder. Other folders
+/// named in a project file, network shares and device paths give None: the default location.
+pub fn trusted_scratch(dir: Option<&str>, project_path: Option<&str>, chosen: &[String]) -> Option<std::path::PathBuf> {
+    let dir = dir.filter(|d| !d.is_empty() && !network_or_device(d))?;
+    if chosen.iter().any(|c| c == dir) {
+        return Some(dir.into());
+    }
+    let root = std::path::Path::new(project_path?).parent().filter(|r| !r.as_os_str().is_empty())?;
+    inside(std::path::Path::new(dir), root).then(|| dir.into())
+}
+
+/// Whether `dir` lies inside `root`, also after following the links in the part that exists.
+fn inside(dir: &std::path::Path, root: &std::path::Path) -> bool {
+    use std::path::Component;
+    if !dir.starts_with(root) || dir.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) {
+        return false;
+    }
+    let mut existing = dir;
+    while existing.symlink_metadata().is_err() {
+        let Some(up) = existing.parent() else { return false };
+        existing = up;
+    }
+    match (std::fs::canonicalize(existing), std::fs::canonicalize(root)) {
+        (Ok(real), Ok(real_root)) => real.starts_with(real_root),
+        _ => false,
+    }
+}
+
+/// Network-share (`\\server\share`, `//server/share`) and device (`\\?\`, `\\.\`, `NUL`,
+/// `COM1`…) paths, on every platform.
+pub(crate) fn network_or_device(dir: &str) -> bool {
+    let d = dir.replace('\\', "/");
+    d.starts_with("//")
+        || d.split('/').any(|c| {
+            let stem = c.split('.').next().unwrap_or_default().trim_end().to_ascii_uppercase();
+            matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+                || stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT")).is_some_and(|n| n.len() == 1 && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+}
+
+/// Remember the Scratch Disks folders chosen in this session, so projects naming them may use
+/// them later (see [`trusted_scratch`]).
+fn remember_scratch_folders(s: &mut Session, dirs: &[String]) {
+    const KEEP: usize = 64;
+    let mut prefs = s.prefs.clone();
+    let list = &mut prefs.auto_save.scratch_folders;
+    for d in dirs {
+        list.retain(|x| x != d);
+        list.push(d.clone());
+    }
+    let excess = list.len().saturating_sub(KEEP);
+    list.drain(..excess);
+    if prefs != s.prefs
+        && let Err(e) = s.set_prefs(prefs)
+    {
+        log::warn!("saving preferences: {e}");
+    }
+}
+
+/// Log and tell the user once when the project just opened names Scratch Disks folders that
+/// FilmCraft will not write to (see [`trusted_scratch`]).
+pub(crate) fn warn_untrusted_scratch(s: &mut Session) {
+    let sc = &s.project.settings.scratch;
+    let ignored: Vec<String> = [&sc.auto_save, &sc.video_previews]
+        .into_iter()
+        .filter_map(|d| d.as_deref().filter(|d| !d.is_empty()))
+        .filter(|d| trusted_scratch(Some(d), s.path.as_deref(), &s.prefs.auto_save.scratch_folders).is_none())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if ignored.is_empty() {
+        return;
+    }
+    let list = ignored.join(", ");
+    log::warn!("project scratch disks outside the project folder not used: {list}");
+    s.toast(format!(
+        "Scratch Disks: not using {list} (outside the project folder and not chosen on this computer). Auto-saves and previews go to the default location; choose the folder in Project Settings ▸ Scratch Disks to use it."
+    ));
 }
 
 fn project_settings_scratch(s: &mut Session, p: &Value) -> Result<Value> {
     let mut sc = s.project.settings.scratch.clone();
+    let mut chosen = Vec::new();
     for (k, slot) in
         [("captured", &mut sc.captured), ("videoPreviews", &mut sc.video_previews), ("audioPreviews", &mut sc.audio_previews), ("autoSave", &mut sc.auto_save)]
     {
@@ -987,10 +1078,19 @@ fn project_settings_scratch(s: &mut Session, p: &Value) -> Result<Value> {
             None => {}
             Some(Value::Null) => *slot = None,
             Some(Value::String(x)) if x.is_empty() || x.eq_ignore_ascii_case("same as project") => *slot = None,
-            Some(Value::String(x)) => *slot = Some(x.clone()),
+            Some(Value::String(x)) if matches!(k, "videoPreviews" | "autoSave") && network_or_device(x) => {
+                return Err(bad("file.projectSettings.scratchDisks", format!("`{k}` must be a folder on this computer, not a network share or device")));
+            }
+            Some(Value::String(x)) => {
+                if matches!(k, "videoPreviews" | "autoSave") {
+                    chosen.push(x.clone());
+                }
+                *slot = Some(x.clone());
+            }
             Some(_) => return Err(bad("file.projectSettings.scratchDisks", format!("`{k}` is a folder path or null"))),
         }
     }
+    remember_scratch_folders(s, &chosen);
     if sc != s.project.settings.scratch {
         s.edit("Scratch Disks", |pr, _| {
             pr.settings.scratch = sc;
