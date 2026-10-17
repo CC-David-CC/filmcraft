@@ -70,7 +70,7 @@ log = "0.4"
 rayon = "1"
 proptest = "1"
 roxmltree = "0.21"
-craft-docpath = { path = "../secfix-craft-libs/crates/docpath" }
+craft-docpath = { git = "https://github.com/aiongg/craft-libs", version = "0.1.0", rev = "12281d07fedff5c955bb68344fb287aa5d87971e" }
 
 # ui
 # Shared frontend components; keep this dependency above the engine boundary.
