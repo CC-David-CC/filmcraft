@@ -370,13 +370,7 @@ mod aspect_overflow_tests {
 
     #[test]
     fn ordinary_pixel_aspect_is_unchanged() {
-        let video = VideoInfo {
-            pixel_width: 1920,
-            pixel_height: 1080,
-            display_width: Some(1440),
-            display_height: Some(1080),
-            ..Default::default()
-        };
+        let video = VideoInfo { pixel_width: 1920, pixel_height: 1080, display_width: Some(1440), display_height: Some(1080), ..Default::default() };
         assert_eq!(video.pixel_aspect(), (3, 4));
     }
 }
