@@ -230,3 +230,55 @@ fn shadow_color_drag_is_one_undo_step() {
     d.exec("edit.undo", json!({}));
     assert_eq!(color(&mut d), before, "one undo restores the original color");
 }
+
+/// Text panel ▸ Graphics (#1487): the text of every text layer in the sequence, in timeline
+/// order, searchable; the timecode goes to the clip and selects the layer, and the text edits in
+/// place as one undo step.
+#[test]
+fn the_text_panels_graphics_tab_lists_and_edits_graphic_text() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Captions and Graphics"}));
+    let mut clips = Vec::new();
+    for (sec, text) in [(6.0, "Closing credits"), (1.0, "Opening title")] {
+        d.exec("playhead.set", json!({"seconds": sec}));
+        let r = d.exec("graphics.newText", json!({"text": text, "seconds": 2}));
+        clips.push(r["clip"].as_u64().unwrap());
+    }
+    let (credits, title) = (clips[0], clips[1]);
+    d.exec("playhead.set", json!({"seconds": 10.0}));
+    d.ok("ui.click", json!({"id": "text.tab.Graphics"}));
+    d.frames(3);
+    let rows = |d: &mut Driver| -> Vec<String> {
+        let v = d.ok("ui.elements", json!({"prefix": "text.graphics."}));
+        v.as_array().unwrap().iter().filter(|e| e["id"].as_str().unwrap().ends_with(".row")).map(|e| e["label"].as_str().unwrap_or("").to_string()).collect()
+    };
+    assert_eq!(rows(&mut d), ["Opening title", "Closing credits"], "in timeline order");
+    // search
+    d.ok("ui.click", json!({"id": "text.graphics.search"}));
+    d.ok("ui.type", json!({"text": "CRED"}));
+    d.frames(3);
+    assert_eq!(rows(&mut d), ["Closing credits"]);
+    d.ok("ui.key", json!({"key": "A", "command": true}));
+    d.ok("ui.key", json!({"key": "Backspace"}));
+    d.frames(3);
+    assert_eq!(rows(&mut d).len(), 2);
+    // the timecode goes to the clip and selects its layer
+    d.ok("ui.click", json!({"id": format!("text.graphics.{credits}.0.goto")}));
+    d.frames(3);
+    let start = d.harness.state().session.active_sequence().unwrap().find_item(filmcraft_project::ClipId(credits)).unwrap().1.start;
+    assert_eq!(d.harness.state().session.playhead(), start);
+    assert_eq!(d.harness.state().session.state.selection, vec![filmcraft_project::ClipId(credits)]);
+    assert_eq!(d.harness.state().session.state.graphic_layers, vec![0]);
+    // edit the title's text in place
+    let undo0 = d.exec("history.list", json!({}))["undo"].as_array().unwrap().len();
+    d.ok("ui.click", json!({"id": format!("text.graphics.{title}.0.text")}));
+    d.ok("ui.key", json!({"key": "A", "command": true}));
+    d.ok("ui.type", json!({"text": "Night Drive"}));
+    d.ok("ui.click", json!({"id": "text.graphics.search"}));
+    d.frames(3);
+    let text = text_param(&mut d, title, "text");
+    assert_eq!(text, Some(filmcraft_project::ParamValue::Text("Night Drive".into())));
+    assert_eq!(d.exec("history.list", json!({}))["undo"].as_array().unwrap().len(), undo0 + 1, "one undo step");
+    assert_eq!(rows(&mut d), ["Night Drive", "Closing credits"]);
+    d.shot("text-panel-graphics");
+}
