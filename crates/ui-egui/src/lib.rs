@@ -707,6 +707,11 @@ impl FilmcraftApp {
                 self.set_theme(ctx, k);
             }
         }
+        // checked every frame: a theme or font change installs the style again
+        let animation = if self.session.prefs.appearance.animations { theme::ANIMATION_TIME } else { 0.0 };
+        if ctx.global_style().animation_time != animation {
+            ctx.global_style_mut(|s| s.animation_time = animation);
+        }
         if self.applied_prefs.as_ref() == Some(&self.session.prefs) {
             return;
         }
