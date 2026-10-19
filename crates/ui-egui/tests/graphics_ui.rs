@@ -270,6 +270,9 @@ fn the_tracking_stopwatch_animates_letter_spacing() {
     d.frames(4);
     let k = keys(&mut d);
     assert_eq!(k.len(), 2, "{k:?}");
+    // the clip starts at 0, where the first keyframe was set, so the second one sits at the playhead
+    let playhead = d.harness.state().session.playhead().0;
+    assert_eq!((k[0].0, k[1].0), (0, playhead), "the keyframes are where the playhead was: {k:?}");
     assert_eq!(k[0].1, 0.0, "the first keyframe keeps its value: {k:?}");
     assert!(k[1].1 > 10.0, "the new keyframe has the dragged value: {k:?}");
     // letter spacing now animates: halfway between the keyframes the value is in between
