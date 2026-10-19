@@ -420,7 +420,11 @@ pub fn format_time(t: Tick, rate: FrameRate, drop_frame: bool, display: TimeDisp
             let rem = Tick(t.0.rem_euclid(TICKS_PER_SECOND)).to_units_floor(sample_rate);
             format!("{:02}:{:02}:{:02}:{rem:05}", secs / 3600, (secs / 60) % 60, secs % 60)
         }
-        TimeDisplay::Seconds => format!("{:.3}", t.seconds()),
+        TimeDisplay::Seconds => {
+            let s = format!("{:.3}", t.seconds());
+            // A tiny negative time rounds to zero but keeps its sign: drop it.
+            if s == "-0.000" { "0.000".to_string() } else { s }
+        }
     }
 }
 
@@ -506,6 +510,16 @@ pub const SAMPLE_RATES: [i64; 6] = [32_000, 44_100, 48_000, 88_200, 96_000, 192_
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn seconds_display_has_no_negative_zero() {
+        let f = |t: i64| format_time(Tick(t), FrameRate::default(), false, TimeDisplay::Seconds, 48000);
+        assert_eq!(f(-1), "0.000");
+        assert_eq!(f(-2), "0.000");
+        assert_eq!(f(-(TICKS_PER_SECOND / 2500)), "0.000");
+        assert_eq!(f(-TICKS_PER_SECOND), "-1.000");
+        assert_eq!(f(-TICKS_PER_SECOND / 1000), "-0.001");
+    }
 
     /// Damaged files and projects can carry zero / negative rates and timebases, and users or
     /// agents can type huge timecodes: these used to panic (division by zero, overflow,
