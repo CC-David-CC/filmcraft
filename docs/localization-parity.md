@@ -58,8 +58,8 @@ whole interface, one PR) at ~4–8 h per language for the catalog plus tests.
 
 UI strings are catalog entries (the non-comment lines of `src/i18n/<code>.tsv`; English counts the
 source strings in the code), so the rows were measured at different times: at this change the
-Spanish and German catalogs both have 3,590 entries, German every Spanish one (a test checks both
-directions).
+Spanish and German catalogs both have 3,590 entries, German every Spanish one. Strings added
+later may stay English in German until translated; only the core menus are required.
 
 Premiere also ships Italian, which we now cover like Spanish, and Russian (6–10 h).
 
