@@ -1211,6 +1211,8 @@ fn color32(c: [f32; 4]) -> Color32 {
 struct Ctx<'a> {
     clip: ClipId,
     layer: usize,
+    /// The layer's index in the clip's effect list (what `effects.toggleAnimation` addresses).
+    eidx: usize,
     e: &'a EffectInstance,
     mt: Tick,
     t: Tokens,
@@ -1258,12 +1260,37 @@ impl Ctx<'_> {
         );
         (r, v)
     }
+    /// The stopwatch in front of an animatable property's label (#2358): turns keyframing on or
+    /// off at the playhead, like the one in Effect Controls. While a property animates, changing
+    /// it here adds or updates a keyframe at the playhead instead of changing it everywhere. A
+    /// Type-tool selection edits the selected characters, which have no keyframes: no stopwatch.
+    fn stopwatch(&mut self, ui: &egui::Ui, row: Rect, id: &str) {
+        let animatable = self.e.def().and_then(|d| d.param(id)).is_some_and(|d| d.animatable);
+        if !animatable || (self.range.is_some() && char_style_key(id).is_some()) {
+            return;
+        }
+        let animated = self.e.params.get(id).is_some_and(|p| p.is_animated());
+        let sw = Rect::from_center_size(pos2(row.min.x + 8.0, row.center().y), vec2(12.0, 12.0));
+        let resp = ui.interact(sw.expand(2.0), egui::Id::new(("gfxsw", self.clip.0, self.layer, id)), Sense::click()).on_hover_text(tl!("Toggle animation"));
+        let tint = if animated {
+            self.t.accent
+        } else if resp.hovered() {
+            self.t.text
+        } else {
+            self.t.text_faint
+        };
+        icons::paint(ui.painter(), sw, Icon::Stopwatch, tint);
+        self.autos.push((format!("graphics.prop.{id}.stopwatch"), sw, "Toggle animation".to_string()));
+        if resp.clicked() {
+            self.actions.push(("effects.toggleAnimation".into(), json!({"clip": self.clip.0, "effect": self.eidx, "param": id})));
+        }
+    }
     fn number(&mut self, ui: &mut egui::Ui, label: &str, id: &str, speed: f64, range: (f64, f64), dec: usize, unit: &str) {
         let v = pv(self.e, id, self.mt).as_f64().unwrap_or(0.0);
         let (r, mut vui) = self.row(ui, label);
         let (resp, nv) = crate::widgets::hot_number(&mut vui, egui::Id::new(("gfxp", self.clip.0, self.layer, id)), v, speed, range, dec, unit, &self.t);
         self.auto(id, resp.rect, label);
-        let _ = r;
+        self.stopwatch(ui, r, id);
         if let Some(nv) = nv {
             self.set(id, json!(nv));
         }
@@ -1278,7 +1305,8 @@ impl Ctx<'_> {
     }
     fn point(&mut self, ui: &mut egui::Ui, label: &str, id: &str) {
         let v = pv(self.e, id, self.mt).as_vec2().unwrap_or_default();
-        let (_, mut vui) = self.row(ui, label);
+        let (r, mut vui) = self.row(ui, label);
+        self.stopwatch(ui, r, id);
         let (rx, nx) = crate::widgets::hot_number(
             &mut vui,
             egui::Id::new(("gfxp", self.clip.0, self.layer, id, "x")),
@@ -1578,7 +1606,7 @@ pub fn properties(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
             let ch = |b: usize| text.get(..b.min(text.len())).map_or(0, |s| s.chars().count());
             Some((ch(ed.caret.min(ed.anchor)), ch(ed.caret.max(ed.anchor))))
         });
-        let mut cx = Ctx { clip, layer: l, e, mt, t, actions: Vec::new(), autos: Vec::new(), range };
+        let mut cx = Ctx { clip, layer: l, eidx: idx[l], e, mt, t, actions: Vec::new(), autos: Vec::new(), range };
         if section(ui, app, "Responsive Design - Position", &t) {
             crate::panels::graphics_templates::responsive_position(app, ui, clip, &it, l, &mut cx.autos, &mut cx.actions);
         }
