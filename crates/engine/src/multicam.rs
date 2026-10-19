@@ -249,6 +249,8 @@ fn has_items(s: &Session) -> std::result::Result<(), String> {
         Err("select clips in the Project panel or the Timeline".into())
     }
 }
+/// Two clips or more: Merge Clips then opens its dialog, which says what is wrong with a
+/// selection it can't merge (two video clips, no audio clip) instead of a greyed-out menu item.
 fn has_two_items(s: &Session) -> std::result::Result<(), String> {
     if selected_items(s).iter().filter(|i| sync::project_clip(&s.project, **i).is_some()).count() >= 2 {
         Ok(())

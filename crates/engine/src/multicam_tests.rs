@@ -357,10 +357,28 @@ fn multicam_from_clips_selected_in_the_timeline() {
     assert_eq!(clips.len(), 3);
     s.execute("timeline.select", json!({"clips": clips})).unwrap();
     assert!(s.is_enabled("clip.createMulticam") && s.is_enabled("clip.mergeClips"));
+    // Merge Clips opens on them, and says why it can't merge three video clips
+    assert!(s.execute("clip.mergeClips", json!({"method": "in"})).unwrap_err().to_string().contains("one video clip"));
     let r = s.execute("clip.createMulticam", json!({"method": "in"})).unwrap();
     let src = ItemId(r["sequence"].as_u64().unwrap());
     let cameras: Vec<ItemId> = s.project.sequence(src).unwrap().video_tracks.iter().filter_map(|t| t.items.first().map(|c| c.item)).collect();
     assert_eq!(cameras, items, "one camera per selected clip's media, in selection order");
+
+    // one video clip and an audio-only one, selected in the Timeline: Merge Clips takes them
+    s.state.active_sequence = Some(edit);
+    let wav = dir.join("room.wav");
+    std::fs::write(&wav, crate::voiceover::write_wav_f32(&vec![0.0; 48_000 * 2], 48_000)).unwrap();
+    let audio = import(&mut s, &[wav.as_path()])[0];
+    s.set_playhead(FrameRate::FPS_24.tick_of(200));
+    s.execute("source.open", json!({"item": audio.0})).unwrap();
+    s.execute("source.overwrite", json!({})).unwrap();
+    let q = s.active_sequence().unwrap();
+    let a = q.audio_tracks.iter().flat_map(|t| &t.items).find(|c| c.item == audio).unwrap().id.0;
+    s.execute("project.select", json!({"items": []})).unwrap();
+    s.execute("timeline.select", json!({"clips": [clips[0], a], "linked": false})).unwrap();
+    assert!(s.is_enabled("clip.mergeClips"));
+    let r = s.execute("clip.mergeClips", json!({"method": "in"})).unwrap();
+    assert!(r["item"].as_u64().is_some(), "{r}");
 }
 
 fn mc_session(audio: &str) -> (Session, Vec<ItemId>, ItemId, ItemId) {
