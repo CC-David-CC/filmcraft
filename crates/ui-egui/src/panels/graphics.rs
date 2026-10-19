@@ -1810,7 +1810,7 @@ pub fn properties(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     for (cmd, mut p) in actions {
         // a drag of a property is one undo step: the first change of each press begins a new one,
         // the rest fold into it (like Effect Controls, #201 / #887)
-        if cmd == "graphics.set" && down {
+        if matches!(cmd.as_str(), "graphics.set" | "graphics.setCharStyle") && down {
             p["merge"] = json!(true);
             p["begin"] = json!(begun != press);
             wrote = true;
