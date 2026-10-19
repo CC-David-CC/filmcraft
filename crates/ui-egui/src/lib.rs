@@ -872,6 +872,16 @@ impl FilmcraftApp {
                 _ => PanelKind::Project,
             };
             self.ui.dock.open_near(p, near);
+            // closed while floating: it floats again where it was (#1985)
+            if let Some(i) = self.ui.closed_floating.iter().position(|(k, _)| *k == p) {
+                let (_, rect) = self.ui.closed_floating.remove(i);
+                if rect.iter().all(|v| v.is_finite()) {
+                    let rect = [rect[0], rect[1], rect[2].max(160.0), rect[3].max(120.0)];
+                    if let Err(e) = self.apply_dock(craft_ui::docking::Action::Float { panel: p, rect }) {
+                        log::warn!("could not float {} again: {e}", p.id());
+                    }
+                }
+            }
         }
         let _ = self.apply_dock(craft_ui::docking::Action::Activate { panel: p });
         self.ui.focused = p;
