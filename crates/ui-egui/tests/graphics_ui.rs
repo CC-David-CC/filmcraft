@@ -230,3 +230,29 @@ fn shadow_color_drag_is_one_undo_step() {
     d.exec("edit.undo", json!({}));
     assert_eq!(color(&mut d), before, "one undo restores the original color");
 }
+
+/// Character ranges use setCharStyle, but must share the same one-gesture undo rule as a layer.
+#[test]
+fn selected_character_size_drag_is_one_undo_step() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace":"Captions and Graphics","tool":"Type"}));
+    d.exec("playhead.set", json!({"seconds":2}));
+    d.frames(3);
+    let p = d.rect("program.picture");
+    d.ok("ui.click", json!({"x":p[0]+p[2]*0.2,"y":p[1]+p[3]*0.35}));
+    d.ok("ui.type", json!({"text":"Undo drag test"}));
+    d.ok("ui.key", json!({"key":"Cmd+A"}));
+    d.frames(3);
+    let before = d.harness.state().session.project.clone();
+    let n = d.harness.state().session.history.undo.len();
+    let r = d.rect("graphics.prop.size");
+    d.ok("ui.drag", json!({"from":{"x":r[0]+r[2]/2.0,"y":r[1]+r[3]/2.0},"to":{"x":r[0]+r[2]/2.0+80.0,"y":r[1]+r[3]/2.0},"steps":8}));
+    d.frames(3);
+    assert_eq!(d.harness.state().session.history.undo.len(), n + 1);
+    let after = d.harness.state().session.project.clone();
+    assert_ne!(*after, *before);
+    d.exec("edit.undo", json!({}));
+    assert_eq!(*d.harness.state().session.project, *before);
+    d.exec("edit.redo", json!({}));
+    assert_eq!(*d.harness.state().session.project, *after);
+}
