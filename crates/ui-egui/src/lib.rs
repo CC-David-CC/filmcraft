@@ -39,6 +39,9 @@ pub mod credits;
 pub mod dock;
 mod dock_shared;
 mod dock_ui;
+/// Thumbnail textures kept before the least recently used are freed (each is up to 320 px wide).
+const MAX_THUMB_TEXTURES: usize = 512;
+
 pub mod frames;
 pub mod graphics_notice;
 pub mod header;
@@ -289,6 +292,9 @@ pub struct FilmcraftApp {
     pub auto: automation::Registry,
     /// Named textures (monitors, thumbnails) with the key they show.
     textures: HashMap<String, (FrameKey, TextureHandle)>,
+    /// The UI pass each thumbnail texture was last used in: thumbnails beyond
+    /// [`MAX_THUMB_TEXTURES`] are freed, least recently used first (#1682).
+    thumb_used: HashMap<String, u64>,
     control_rx: Option<Receiver<ControlRequest>>,
     /// One explicit panel reveal; consumed by the custom renderer, never repeated per frame.
     pub(crate) pending_panel_raise: Option<PanelKind>,
@@ -553,6 +559,7 @@ impl FilmcraftApp {
             native_dialog: None,
             auto: Default::default(),
             textures: HashMap::new(),
+            thumb_used: HashMap::new(),
             control_rx: None,
             pending_panel_raise: None,
             control_input_only: false,
@@ -633,6 +640,7 @@ impl FilmcraftApp {
                 FrameServer::default_workers(),
             ));
             self.textures.clear();
+            self.thumb_used.clear();
             self.tl.reset_media_caches();
             // the new frame server needs the Memory settings
             self.applied_prefs = None;
@@ -1266,12 +1274,40 @@ impl FilmcraftApp {
         let name = format!("thumb-{}-{}-{}", item.0, frame, width);
         if let Some(img) = self.frames.get(&key) {
             let id = self.texture_for(ctx, &name, key, &img);
+            self.thumb_touched(ctx, &name);
             return Some((id, egui::vec2(img.w as f32, img.h as f32)));
         }
         let scale = width as f32 / src_w.max(1) as f32;
         let project = self.session.project.clone();
         self.frames.request(key, rate.tick_of(frame), scale, &project, 50);
-        self.texture_existing(&name)
+        let shown = self.texture_existing(&name);
+        if shown.is_some() {
+            self.thumb_touched(ctx, &name);
+        }
+        shown
+    }
+
+    /// Note that thumbnail texture `name` is used in this pass, and free the least recently used
+    /// thumbnails once there are more than [`MAX_THUMB_TEXTURES`]: every frame shown in a timeline
+    /// tile or a hover scrub got a texture of its own that was never freed (#1682).
+    fn thumb_touched(&mut self, ctx: &egui::Context, name: &str) {
+        let pass = ctx.cumulative_pass_nr();
+        if self.thumb_used.insert(name.to_string(), pass).is_some() || self.thumb_used.len() <= MAX_THUMB_TEXTURES {
+            return;
+        }
+        // down to three quarters, never a thumbnail already drawn in this pass
+        let mut old: Vec<(u64, String)> = self.thumb_used.iter().filter(|(_, p)| **p < pass).map(|(n, p)| (*p, n.clone())).collect();
+        old.sort_unstable();
+        let excess = self.thumb_used.len().saturating_sub(MAX_THUMB_TEXTURES * 3 / 4);
+        for (_, n) in old.into_iter().take(excess) {
+            self.thumb_used.remove(&n);
+            self.textures.remove(&n);
+        }
+    }
+
+    /// The number of thumbnail textures held (tests, diagnostics).
+    pub fn thumbnail_textures(&self) -> usize {
+        self.textures.keys().filter(|n| n.starts_with("thumb-")).count()
     }
 
     // ---------------------------------------------------------------- files
