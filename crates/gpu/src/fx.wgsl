@@ -466,10 +466,11 @@ fn lumetri_op(c: vec3<f32>, p: vec2<i32>) -> vec3<f32> {
     let whl_val = clamp(l, 0.0, 1.0);
     let whl = whl_val * whl_val * whl_val;
     let nl = max(l + sh_k * ws + hl_k * whl, 0.0);
-    // the lift scales a pixel by at most 2 (LIFT_SCALE_MAX in effects.rs); the rest is added equally
+    // below a luma of 0.02 (LIFT_LUMA_FLOOR in effects.rs) the hue-preserving scale nl / l is held
+    // at that luma's and the rest of the lift is added equally (lift_scale in effects.rs)
     var k = 1.0;
     if l > 1e-5 {
-        k = min(nl / l, 2.0);
+        k = min(nl / l, 1.0 + max(nl - l, 0.0) / 0.02);
     }
     let add = nl - max(l, 0.0) * k;
     v = v * k + vec3(add);
