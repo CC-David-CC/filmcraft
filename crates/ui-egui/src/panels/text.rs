@@ -296,6 +296,10 @@ pub struct GraphicText {
     /// The layer's own name, when it has one.
     pub name: Option<String>,
     pub text: String,
+    /// The timeline time the text was read at (the playhead, or the clip's start when the
+    /// playhead is outside the clip): an edit is written there, so keyframed text changes the
+    /// value that is shown.
+    pub at: filmcraft_time::Tick,
 }
 
 /// Every text layer of every graphic clip in `seq`, in timeline order (then lower tracks first,
@@ -318,7 +322,7 @@ pub fn graphic_texts(seq: &filmcraft_project::Sequence, at: filmcraft_time::Tick
                     Some(filmcraft_project::ParamValue::Text(n)) if !n.trim().is_empty() => Some(n),
                     _ => None,
                 };
-                out.push((ti, GraphicText { clip: it.id, layer, start: it.start, track: format!("V{}", ti + 1), name, text }));
+                out.push((ti, GraphicText { clip: it.id, layer, start: it.start, track: format!("V{}", ti + 1), name, text, at: t }));
             }
         }
     }
@@ -415,7 +419,7 @@ fn graphics(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
                             ui.data_mut(|d| d.remove::<String>(tkey));
                         }
                         if resp.lost_focus() && buf != g.text {
-                            actions.push(("graphics.set".into(), json!({"clip": g.clip.0, "layer": g.layer, "props": {"text": buf}})));
+                            actions.push(("graphics.set".into(), json!({"clip": g.clip.0, "layer": g.layer, "props": {"text": buf}, "time": g.at.0})));
                         }
                     });
                 });

@@ -282,3 +282,35 @@ fn the_text_panels_graphics_tab_lists_and_edits_graphic_text() {
     assert_eq!(rows(&mut d), ["Night Drive", "Closing credits"]);
     d.shot("text-panel-graphics");
 }
+
+/// Keyframed text: the Graphics tab shows a clip's text at the clip's start when the playhead is
+/// past the clip, and an edit is written there (not at the clip's last frame), so the value shown
+/// is the one that changes.
+#[test]
+fn a_graphics_tab_edit_writes_keyframed_text_where_it_is_shown() {
+    let mut d = Driver::demo();
+    d.ok("ui.set", json!({"workspace": "Captions and Graphics"}));
+    d.exec("playhead.set", json!({"seconds": 1.0}));
+    let clip = d.exec("graphics.newText", json!({"text": "Start", "seconds": 2}))["clip"].as_u64().unwrap();
+    let it = d.harness.state().session.active_sequence().unwrap().find_item(filmcraft_project::ClipId(clip)).unwrap().1.clone();
+    // animate the text: "Start" at the clip's start, "End" near its end
+    d.exec("effects.toggleAnimation", json!({"clip": clip, "effect": "graphic_text", "param": "text"}));
+    let late = it.start.0 + (it.duration.0 * 9) / 10;
+    d.exec("graphics.set", json!({"clip": clip, "layer": 0, "props": {"text": "End"}, "time": late}));
+    // the playhead past the clip: the row shows the start's text
+    d.exec("playhead.set", json!({"seconds": 10.0}));
+    d.ok("ui.click", json!({"id": "text.tab.Graphics"}));
+    d.frames(3);
+    d.ok("ui.click", json!({"id": format!("text.graphics.{clip}.0.text")}));
+    d.ok("ui.key", json!({"key": "A", "command": true}));
+    d.ok("ui.type", json!({"text": "Edited"}));
+    d.ok("ui.click", json!({"id": "text.graphics.search"}));
+    d.frames(3);
+    let at = |d: &mut Driver, t: i64| {
+        let it = d.harness.state().session.active_sequence().unwrap().find_item(filmcraft_project::ClipId(clip)).unwrap().1.clone();
+        let mt = it.effect_time_at(filmcraft_time::Tick(t));
+        it.effects.iter().find(|e| e.effect == "graphic_text").unwrap().param("text").unwrap().value_at(mt)
+    };
+    assert_eq!(at(&mut d, it.start.0), filmcraft_project::ParamValue::Text("Edited".into()), "the shown (start) value changed");
+    assert_eq!(at(&mut d, late), filmcraft_project::ParamValue::Text("End".into()), "the end keeps its own");
+}
