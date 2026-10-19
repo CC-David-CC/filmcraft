@@ -580,4 +580,12 @@ fn a_panel_closed_while_floating_reopens_floating_where_it_was() {
     menus::invoke(&mut app, &ctx, &menus::panel_command_id(PanelKind::Info), json!({})).unwrap();
     assert!(app.ui.dock.contains(PanelKind::Info));
     assert!(!app.ui.floating.iter().any(|g| g.panels.contains(&PanelKind::Info)));
+    // the Timeline too, though reopening it first puts it back in its own place in the dock
+    menus::invoke(&mut app, &ctx, "window.floatPanel", json!({"panel": "Timeline", "rect": [60, 80, 700, 300]})).unwrap();
+    let rect = app.ui.floating.iter().find(|g| g.panels.contains(&PanelKind::Timeline)).unwrap().rect;
+    menus::invoke(&mut app, &ctx, "window.closePanel", json!({"panel": "Timeline"})).unwrap();
+    menus::invoke(&mut app, &ctx, &menus::panel_command_id(PanelKind::Timeline), json!({})).unwrap();
+    let back = app.ui.floating.iter().find(|g| g.panels.contains(&PanelKind::Timeline)).expect("the Timeline floats again");
+    assert_eq!(back.rect, rect);
+    assert!(!app.ui.dock.contains(PanelKind::Timeline));
 }
