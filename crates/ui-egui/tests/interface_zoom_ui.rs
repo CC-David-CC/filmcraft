@@ -89,7 +89,8 @@ fn ctrl_plus_does_what_ctrl_equals_does_and_the_interface_zoom_can_be_reset() {
     d.harness.ctx.set_zoom_factor(1.75);
     d.frames(2);
     assert_eq!(d.harness.ctx.zoom_factor(), 1.75);
-    d.ok("ui.menu.invoke", json!({"id": "view.resetInterfaceZoom"}));
+    let r = d.ok("ui.menu.invoke", json!({"id": "view.resetInterfaceZoom"}));
+    assert_eq!(r["zoom"], json!(1.0), "the reply says the zoom it set: {r}");
     d.frames(2);
     assert_eq!(d.harness.ctx.zoom_factor(), 1.0);
 }

@@ -421,8 +421,8 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
         // the whole interface back to Settings ▸ Appearance ▸ UI Scale, after Ctrl+Plus or a mouse
         // mapped to page zoom scaled it (#2253)
         "view.resetInterfaceZoom" => {
-            app.reset_ui_zoom(ctx);
-            return Ok(json!({"zoom": ctx.zoom_factor()}));
+            let zoom = app.reset_ui_zoom(ctx);
+            return Ok(json!({"zoom": zoom}));
         }
         "mode.import" => {
             app.ui.mode = Mode::Import;
