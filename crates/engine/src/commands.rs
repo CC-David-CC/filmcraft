@@ -3113,7 +3113,7 @@ fn build() -> Vec<CommandSpec> {
                 .ok_or_else(|| bad("effects.toggleAnimation", "no such effect"))?;
                 // a parameter an older instance lacks (added to the effect later) starts from its
                 // default, as the UI shows it, without touching an existing one
-                if p.get("mask").is_none()
+                if p.get("mask").is_none_or(Value::is_null)
                     && !e.params.contains_key(&pid)
                     && let Some(d) = e.def().and_then(|d| d.param(&pid))
                 {
