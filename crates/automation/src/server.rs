@@ -287,7 +287,9 @@ impl FilmcraftMcp {
     /// not null, always describes the sequence the returned `project.activeSequence` names.
     async fn document(&self) -> Result<Value, AutomationError> {
         let project = self.run("project.inspect", json!({})).await?;
-        let active = project.get("activeSequence").and_then(Value::as_i64);
+        // `ItemId` is a u64 (`item_p` parses the `item` param with `u64_p`): read it as one too,
+        // not `as_i64`, so an id above `i64::MAX` is still looked up instead of silently going null.
+        let active = project.get("activeSequence").and_then(Value::as_u64);
         let sequence = match active {
             Some(id) => self.run("sequence.inspect", json!({"item": id})).await.ok(),
             None => None,
@@ -1044,5 +1046,38 @@ mod tests {
         let v = m.document().await.unwrap();
         assert_eq!(v["project"]["activeSequence"], json!(21), "{v}");
         assert_eq!(v["sequence"]["id"], json!(21), "sequence must describe the reported active id, not whatever is active now: {v}");
+    }
+
+    /// `activeSequence` is a `u64` (`ItemId`'s representation; `item_p` parses the `item` param
+    /// with `u64_p`), so an id above `i64::MAX` must still round-trip through `document()`:
+    /// reading it with `as_i64` would silently return `None` and make `sequence` go null instead
+    /// of inspecting the (valid) id project.inspect reported.
+    #[tokio::test]
+    async fn doc_inspect_handles_an_active_sequence_id_above_i64_max() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        const HUGE: u64 = i64::MAX as u64 + 1;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            let (s, _) = listener.accept().await.unwrap();
+            let (r, mut w) = s.into_split();
+            let mut lines = tokio::io::BufReader::new(r).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let req: Value = serde_json::from_str(&line).unwrap();
+                let result = match req["params"]["command"].as_str().unwrap_or_default() {
+                    "project.inspect" => json!({"activeSequence": HUGE}),
+                    // Echoes back whatever `item` it was actually asked for, so the test can
+                    // check that `document()` asked for `HUGE` rather than nothing at all.
+                    "sequence.inspect" => json!({"id": req["params"]["params"]["item"]}),
+                    _ => Value::Null,
+                };
+                let line = format!("{}\n", json!({"id": req["id"], "ok": true, "result": result}));
+                w.write_all(line.as_bytes()).await.unwrap();
+            }
+        });
+        let m = FilmcraftMcp::bridge(&addr).unwrap();
+        let v = m.document().await.unwrap();
+        assert_eq!(v["project"]["activeSequence"].as_u64(), Some(HUGE), "{v}");
+        assert_eq!(v["sequence"]["id"].as_u64(), Some(HUGE), "an id above i64::MAX must still be inspected, not dropped to a null sequence: {v}");
     }
 }
