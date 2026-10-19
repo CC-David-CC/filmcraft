@@ -831,7 +831,20 @@ pub fn monitor_overlay(app: &mut FilmcraftApp, ui: &mut egui::Ui, pic: Rect, fra
         let p = resp.interact_pointer_pos().unwrap_or(pic.center());
         let in_edit = edit_view.is_some_and(|v| v.hit(p));
         match tool {
-            _ if in_edit => {}
+            // a click in the text being edited puts the caret there (Shift extends the selection),
+            // as a press that becomes a drag already does (#2430)
+            _ if in_edit => {
+                if let (Some(v), Some(mut ed)) = (edit_view, editing.clone())
+                    && let Some(tp) = text_of(&v.spec)
+                    && let Some((x, y)) = v.to_local(p)
+                {
+                    ed.caret = text_layout(tp).hit(x, y);
+                    if !ui.input(|i| i.modifiers.shift) {
+                        ed.anchor = ed.caret;
+                    }
+                    app.ui.gfx_edit = Some(ed);
+                }
+            }
             Tool::Type | Tool::VerticalType => {
                 if let Some(v) = views.iter().find(|v| v.is_text() && v.hit(p)) {
                     start_edit_at(app, ui, v, p, &mut actions);
@@ -910,8 +923,8 @@ pub fn monitor_overlay(app: &mut FilmcraftApp, ui: &mut egui::Ui, pic: Rect, fra
             painter.add(egui::Shape::convex_polygon(q.to_vec(), Color32::from_rgba_unmultiplied(80, 140, 255, 90), Stroke::NONE));
         }
         let (x, base, li) = l.caret(caret);
-        let line = &l.lines[li.min(l.lines.len() - 1)];
-        let (a, b) = (sp(&v.to_screen, x, base - line.ascent), sp(&v.to_screen, x, base + line.descent));
+        let (ascent, descent) = l.lines.get(li.min(l.lines.len().saturating_sub(1))).map_or((0.0, 0.0), |line| (line.ascent, line.descent));
+        let (a, b) = (sp(&v.to_screen, x, base - ascent), sp(&v.to_screen, x, base + descent));
         painter.line_segment([a, b], Stroke::new(1.5, Color32::WHITE));
         painter.line_segment([a + vec2(1.0, 0.0), b + vec2(1.0, 0.0)], Stroke::new(0.5, Color32::BLACK));
         let er = Rect::from_points(&v.quad()).union(Rect::from_two_pos(a, b));
