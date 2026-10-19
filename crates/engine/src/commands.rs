@@ -3111,6 +3111,14 @@ fn build() -> Vec<CommandSpec> {
                     _ => None,
                 }
                 .ok_or_else(|| bad("effects.toggleAnimation", "no such effect"))?;
+                // a parameter an older instance lacks (added to the effect later) starts from its
+                // default, as the UI shows it, without touching an existing one
+                if p.get("mask").is_none()
+                    && !e.params.contains_key(&pid)
+                    && let Some(d) = e.def().and_then(|d| d.param(&pid))
+                {
+                    e.params.insert(pid.clone(), filmcraft_project::Param::new(d.default.clone()));
+                }
                 crate::masks::target_param(e, p, &pid).ok_or_else(|| bad("effects.toggleAnimation", "no such param"))?.toggle_animation(mt);
                 Ok(())
             })?;
