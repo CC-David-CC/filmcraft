@@ -56,6 +56,11 @@ whole interface, one PR) at ~4–8 h per language for the catalog plus tests.
 | *Other shipped:* Italian | it | 3,573 (same entries as Spanish, plus the macOS Settings item); must cover the core menus, no entry without a Spanish one | as Spanish | Latin (bundled fonts) | not recorded; welcome | partial | review |
 | *Other shipped:* Ukrainian | uk | 351 (10.0%) | menus only | Cyrillic (bundled) | not recorded | menus only | 5–9 h |
 
+UI strings are catalog entries (the non-comment lines of `src/i18n/<code>.tsv`; English counts the
+source strings in the code), so the rows were measured at different times: at this change the
+Spanish and German catalogs both have 3,590 entries, German every Spanish one (a test checks both
+directions).
+
 Premiere also ships Italian, which we now cover like Spanish, and Russian (6–10 h).
 
 **Localization dimension:** 9 of the 12 key languages near-complete (English, Spanish, Japanese,

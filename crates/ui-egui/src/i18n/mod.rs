@@ -1115,6 +1115,11 @@ mod tests {
         for (ctx, en, _) in &entries {
             assert!(ctx.is_empty() && Language::Es.has(en), "German entry without a Spanish one: {ctx:?} {en:?}");
         }
+        // and the other way round: German has every Spanish entry, so nothing falls back to English
+        let (spanish, _) = catalog::parse_entries(include_str!("es.tsv"));
+        for (ctx, en, _) in &spanish {
+            assert!(!ctx.is_empty() || Language::De.has(en), "Spanish entry without a German one: {en:?}");
+        }
         for en in core_menu_labels() {
             assert!(Language::De.has(&en), "missing German menu label: {en}");
         }
