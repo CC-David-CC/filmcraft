@@ -685,6 +685,16 @@ impl FilmcraftApp {
         }
     }
 
+    /// View ▸ Reset Interface Zoom: the scale Settings ▸ Appearance ▸ UI Scale asks for (the
+    /// system's with Auto), undoing any session zoom (#2253).
+    /// Returns the zoom factor set (egui reports it from the next pass on).
+    pub(crate) fn reset_ui_zoom(&mut self, ctx: &egui::Context) -> f32 {
+        let native = ctx.native_pixels_per_point().filter(|v| v.is_finite() && *v > 0.0).unwrap_or(1.0);
+        let zoom = self.session.prefs.appearance.ui_scale_factor().map_or(1.0, |scale| scale / native);
+        ctx.set_zoom_factor(zoom);
+        zoom
+    }
+
     /// Make the UI follow the settings after they change (theme, tooltips, frame cache budget,
     /// play after rendering, audio device).
     pub fn apply_prefs(&mut self, ctx: &egui::Context) {
