@@ -938,12 +938,24 @@ fn confirmed_account_save_preserves_a_newer_timeline_edit() {
     assert_eq!(saved.project.name, "Trailer");
     assert_eq!(saved.project.sequences().count(), 1);
     assert!(saved.view.is_some());
+    let mut reopened = Session::default();
+    reopened.open_account_project(Some("Video/Trailer.fcproj"), &bytes, false).unwrap();
+    assert_eq!(reopened.path.as_deref(), Some("Video/Trailer.fcproj"));
+    assert_eq!(reopened.project.sequences().count(), 1);
+    assert!(reopened.state.active_sequence.is_some() && !reopened.is_dirty());
 
     session.execute("file.newSequence", json!({"name":"Newer Cut"})).unwrap();
     session.adopt_account_save(capture).unwrap();
     assert_eq!(session.path.as_deref(), Some("Video/Trailer.fcproj"));
     assert_eq!(session.project.sequences().count(), 2);
     assert!(session.is_dirty());
+    let draft = session.capture_account_draft().unwrap();
+    for path in [Some("Video/Trailer.fcproj"), None] {
+        reopened.open_account_project(path, &draft, true).unwrap();
+        assert_eq!(reopened.path.as_deref(), path);
+        assert_eq!(reopened.project.sequences().count(), 2);
+        assert!(reopened.is_dirty());
+    }
     assert!(session.adopt_account_save(older).is_err());
     assert!(session.prepare_account_save("../Trailer.fcproj").is_err());
     assert!(session.prepare_account_save("Video/Trailer.xml").is_err());

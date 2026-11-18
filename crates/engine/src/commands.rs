@@ -5324,6 +5324,19 @@ fn name_project(p: &mut filmcraft_project::Project, name: String) {
     p.name = name;
 }
 
+pub const ACCOUNT_PROJECT_BYTES: usize = 128 * 1024 * 1024;
+
+fn account_project_name(path: &str) -> Result<String> {
+    if path.len() > 2048
+        || !path.to_ascii_lowercase().ends_with(".fcproj")
+        || path.split('/').any(|part| matches!(part, "" | "." | ".."))
+        || path.chars().any(|ch| ch == '\\' || ch.is_control())
+    {
+        return Err(EngineError::Other("Choose an account-relative .fcproj destination.".into()));
+    }
+    project_name_for(path).ok_or_else(|| EngineError::Other("Choose a FilmCraft project name.".into()))
+}
+
 /// Exact native project awaiting a confirmed write to account storage.
 pub struct PreparedAccountSave {
     project_instance: std::sync::Arc<()>,
@@ -5338,14 +5351,7 @@ pub struct PreparedAccountSave {
 impl Session {
     /// Encode the editable project and its sequence view for an account write.
     pub fn prepare_account_save(&self, path: &str) -> Result<(PreparedAccountSave, Vec<u8>)> {
-        if path.len() > 2048
-            || !path.to_ascii_lowercase().ends_with(".fcproj")
-            || path.split('/').any(|part| matches!(part, "" | "." | ".."))
-            || path.chars().any(|ch| ch == '\\' || ch.is_control())
-        {
-            return Err(EngineError::Other("Choose an account-relative .fcproj destination.".into()));
-        }
-        let name = project_name_for(path).ok_or_else(|| EngineError::Other("Choose a FilmCraft project name.".into()))?;
+        let name = account_project_name(path)?;
         if self.path.as_deref() == Some(path) && self.loaded_schema < filmcraft_format::SCHEMA_VERSION {
             return Err(EngineError::Other("Use Save As to preserve your original project before saving this upgraded copy.".into()));
         }
@@ -5353,11 +5359,7 @@ impl Session {
         if project.name != name {
             name_project(std::sync::Arc::make_mut(&mut project), name.clone());
         }
-        let view = self.project_view();
-        let bytes = filmcraft_format::encode_with_view(&project, Some(&view), false);
-        if bytes.len() > 128 * 1024 * 1024 {
-            return Err(EngineError::Other("The FilmCraft project exceeds the WebOS project size limit.".into()));
-        }
+        let bytes = self.encode_account_project(&project)?;
         Ok((
             PreparedAccountSave {
                 project_instance: self.project_instance.clone(),
@@ -5370,6 +5372,35 @@ impl Session {
             },
             bytes,
         ))
+    }
+
+    /// Capture an edit for local recovery without creating a server write.
+    pub fn capture_account_draft(&self) -> Result<Vec<u8>> {
+        self.encode_account_project(&self.project)
+    }
+
+    fn encode_account_project(&self, project: &filmcraft_project::Project) -> Result<Vec<u8>> {
+        let view = self.project_view();
+        let bytes = filmcraft_format::encode_with_view(project, Some(&view), false);
+        if bytes.len() > ACCOUNT_PROJECT_BYTES {
+            return Err(EngineError::Other("The FilmCraft project exceeds the WebOS project size limit.".into()));
+        }
+        Ok(bytes)
+    }
+
+    /// Open account bytes or restore an unsaved draft. The account host supplies the binding.
+    pub fn open_account_project(&mut self, path: Option<&str>, bytes: &[u8], recover: bool) -> Result<()> {
+        if let Some(path) = path {
+            account_project_name(path)?;
+        } else if !recover {
+            return Err(EngineError::Other("Choose an account FilmCraft project.".into()));
+        }
+        if bytes.len() > ACCOUNT_PROJECT_BYTES {
+            return Err(EngineError::Other("The FilmCraft project exceeds the WebOS project size limit.".into()));
+        }
+        let loaded = filmcraft_format::decode(bytes).map_err(|error| EngineError::Other(error.to_string()))?;
+        install_loaded_project(self, loaded, path.map(str::to_string), !recover);
+        Ok(())
     }
 
     /// Bind the captured revision after storage confirms it, preserving any intervening edit.
@@ -5464,8 +5495,18 @@ fn open_project(s: &mut Session, path: &str) -> Result<Value> {
     let bytes = s.services.read_file_bounded(path, filmcraft_format::MAX_PROJECT_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let loaded = filmcraft_format::decode(&bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let (from, migrated) = (loaded.schema_version, loaded.migrated());
+    install_loaded_project(s, loaded, Some(path.to_string()), true);
+    s.note_recent_project();
+    if migrated {
+        s.toast(format!("Upgraded project from schema v{from} to v{}; the original is kept as a backup when you save", filmcraft_format::SCHEMA_VERSION));
+    }
+    let missing = crate::relink::on_open(s);
+    Ok(json!({"path": path, "schemaVersion": from, "migrated": migrated, "missingMedia": missing}))
+}
+
+fn install_loaded_project(s: &mut Session, loaded: filmcraft_format::Loaded, path: Option<String>, clean: bool) {
     crate::masks::discard_jobs(s);
-    install_project(s, loaded.project, Some(path.to_string()), true);
+    install_project(s, loaded.project, path, clean);
     if let Some(view) = loaded.view.filter(|_| s.prefs.timeline.restore_open_sequences) {
         s.restore_project_view(view);
     }
@@ -5473,13 +5514,7 @@ fn open_project(s: &mut Session, path: &str) -> Result<Value> {
     if let Some(seq) = s.state.active_sequence {
         s.events.push(crate::Event::OpenSequence(seq));
     }
-    s.note_recent_project();
-    s.loaded_schema = from;
-    if migrated {
-        s.toast(format!("Upgraded project from schema v{from} to v{}; the original is kept as a backup when you save", filmcraft_format::SCHEMA_VERSION));
-    }
-    let missing = crate::relink::on_open(s);
-    Ok(json!({"path": path, "schemaVersion": from, "migrated": migrated, "missingMedia": missing}))
+    s.loaded_schema = loaded.schema_version;
 }
 
 /// Load a recovery candidate (newest when `id` is None) as the current, unsaved project.
