@@ -99,6 +99,29 @@ pub fn register_blob(name: &str, blob: web_sys::Blob) -> String {
     })
 }
 
+/// Register a Blob already verified by account storage. Resuming a project can reuse an
+/// original in this view, while native commands cannot replace its digest-bound data.
+pub fn register_account_blob(path: &str, blob: web_sys::Blob) -> Result<(), String> {
+    let size = blob.size() as u64;
+    if crate::hostmode::account_media_parts(path).is_none() || !(1..=crate::hostmode::ACCOUNT_MEDIA_BYTES).contains(&size) {
+        return Err("Invalid FilmCraft account original.".into());
+    }
+    FS.with(|fs| {
+        let mut fs = fs.borrow_mut();
+        match fs.entries.get(path) {
+            Some(Entry::Blob { size: stored, .. }) if *stored == size => return Ok(()),
+            Some(_) => return Err("A different file occupies the FilmCraft original location.".into()),
+            None => {}
+        }
+        let id = fs.next_id;
+        fs.next_id = id.checked_add(1).ok_or("The FilmCraft file table has reached its limit.")?;
+        fs.blobs.insert(id, blob);
+        fs.entries.insert(path.into(), Entry::Blob { id, size });
+        fs.recount();
+        Ok(())
+    })
+}
+
 /// Put bytes at a path (no download).
 pub fn put(path: &str, data: Vec<u8>) {
     FS.with(|fs| fs.borrow_mut().entries.insert(path.to_string(), Entry::Mem(data.into())));
@@ -358,6 +381,9 @@ impl Services for WebServices {
     }
 
     fn write_file(&self, path: &str, data: &[u8]) -> io::Result<()> {
+        if crate::hostmode::account_media_parts(path).is_some() {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "FilmCraft account originals are read-only."));
+        }
         if let Some(rel) = path.strip_prefix("/opfs/") {
             crate::opfs::write(rel.to_string(), data.to_vec());
         }
@@ -375,6 +401,9 @@ impl Services for WebServices {
     }
 
     fn write_file_new(&self, path: &str, data: &[u8]) -> io::Result<()> {
+        if crate::hostmode::account_media_parts(path).is_some() {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "FilmCraft account originals are read-only."));
+        }
         if path.starts_with("/opfs/") {
             return Err(io::Error::new(io::ErrorKind::Unsupported, "exclusive OPFS writes are unavailable"));
         }

@@ -18,6 +18,8 @@
 #![cfg(target_arch = "wasm32")]
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
+mod account;
+mod account_port;
 pub mod api;
 pub mod audio;
 pub mod download_pacing;
@@ -93,10 +95,16 @@ pub struct WebApp {
     /// the host instead of downloads, it hears about unsaved changes, and it opens the files it
     /// sends.
     pub host: Option<host::Bridge>,
+    pub(crate) account: Option<account::AccountView>,
 }
 
 impl eframe::App for WebApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if self.account.as_ref().is_some_and(account::AccountView::suspended) {
+            raw_input.events.clear();
+            raw_input.dropped_files.clear();
+            return;
+        }
         self.app.raw_input_hook(ctx, raw_input);
     }
 
@@ -105,6 +113,12 @@ impl eframe::App for WebApp {
         let actions = ACTIONS.with(|a| std::mem::take(&mut *a.borrow_mut()));
         for f in actions {
             f(self, ctx);
+        }
+        if let Some(account) = &mut self.account {
+            account.poll(&mut self.app, ctx);
+            if account.suspended() {
+                return;
+            }
         }
         self.app.logic_inner(ctx);
         // exports advance between frames (no threads)
@@ -119,12 +133,21 @@ impl eframe::App for WebApp {
         if let Some(a) = &self.audio {
             a.pump();
         }
-        self.autosave.tick(&self.app.session, ctx);
+        if self.account.is_none() {
+            self.autosave.tick(&self.app.session, ctx);
+        }
         self.app.finish_ime_reset_logic(ctx);
+        if let Some(account) = &mut self.account
+            && let Err(error) = account.publish_state(&self.app)
+        {
+            self.app.status(error);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        self.app.ui(ui, frame);
+        if !self.account.as_ref().is_some_and(account::AccountView::suspended) {
+            self.app.ui(ui, frame);
+        }
     }
 }
 
@@ -146,8 +169,15 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
     // opts a page in instead: it runs FilmCraft in its own document and talks over DOM
     // `CustomEvent`s on the canvas. In host mode the host sends the document to edit, so no demo
     // project opens and nothing from an earlier visit is recovered.
-    let host = host::Bridge::connect(&canvas);
-    let in_host_mode = host.is_some();
+    let account_mode = web_sys::window()
+        .and_then(|window| window.location().search().ok())
+        .and_then(|search| web_sys::UrlSearchParams::new_with_str(&search).ok())
+        .and_then(|search| search.get("host"))
+        .as_deref()
+        == Some("webos-account");
+    let account_port = if account_mode { Some(account_port::AccountPort::connect().map_err(|error| JsValue::from_str(&error))?) } else { None };
+    let host = if account_mode { None } else { host::Bridge::connect(&canvas) };
+    let in_host_mode = host.is_some() || account_mode;
 
     let isolated = js_sys::Reflect::get(&js_sys::global(), &"crossOriginIsolated".into()).ok().and_then(|v| v.as_bool()).unwrap_or(false);
     // Frame rendering runs cooperatively on this thread. wasm threads need a cross-origin
@@ -162,7 +192,9 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
     let recovered = if in_host_mode || query_flag("fresh") || query_flag("norecover") { None } else { recovery::load_snapshot().await };
     webcodecs::probe().await;
 
-    api::install()?;
+    if !account_mode {
+        api::install()?;
+    }
     import::install_drop_handlers()?;
 
     let demo = !in_host_mode && !query_flag("empty");
@@ -176,6 +208,7 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
     }
     let runner = eframe::WebRunner::new();
     let host_for_app = host.clone();
+    let account_for_app = account_port.clone();
     let started = runner
         .start(
             canvas,
@@ -220,9 +253,17 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                 // Settings ▸ General ▸ Interface Language ▸ System Language (#218): the browser's languages.
                 app.hooks.system_languages =
                     Some(Box::new(|| web_sys::window().map(|w| w.navigator().languages().iter().filter_map(|v| v.as_string()).collect()).unwrap_or_default()));
-                let (tx, rx) = std::sync::mpsc::channel();
-                api::set_sender(tx);
-                app = app.with_control(rx);
+                let account = account_for_app.map(|port| {
+                    port.wake_on(cc.egui_ctx.clone());
+                    let account = account::AccountView::new(port);
+                    app.hooks.account_project = Some(account.project_service());
+                    account
+                });
+                if account.is_none() {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    api::set_sender(tx);
+                    app = app.with_control(rx);
+                }
                 if let Some(t) = toast {
                     app.status(t);
                 }
@@ -245,7 +286,7 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
                 }
                 set_info("audio", json!(audio.is_some()));
                 set_info("restoredMedia", json!(restored));
-                Ok(Box::new(WebApp { app, audio, autosave: recovery::Autosave::default(), host: host_for_app }))
+                Ok(Box::new(WebApp { app, audio, autosave: recovery::Autosave::default(), host: host_for_app, account }))
             }),
         )
         .await;
@@ -256,7 +297,15 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
             Err(e) => bridge.post_failed(&e.as_string().unwrap_or_else(|| format!("{e:?}"))),
         }
     }
+    if let Some(account) = &account_port
+        && let Err(error) = &started
+    {
+        account.startup_failed(&error.as_string().unwrap_or_else(|| "The FilmCraft renderer could not start.".into()));
+    }
     started?;
+    if let Some(port) = &account_port {
+        account::start(port).await.map_err(|error| JsValue::from_str(&error))?;
+    }
     set_info("startupMs", json!(t0.elapsed().as_secs_f64() * 1000.0));
     // keep the runner alive for the page's lifetime
     std::mem::forget(runner);

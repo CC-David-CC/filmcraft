@@ -54,3 +54,22 @@ pub fn project_open_ok(len: u64) -> bool {
 pub fn is_save_as(write: &str, host_document: Option<&str>, project_path: Option<&str>) -> bool {
     host_document != Some(write) && project_path == Some(write)
 }
+
+const ACCOUNT_MEDIA_PREFIX: &str = "/files/webos-originals/";
+pub const ACCOUNT_MEDIA_BYTES: u64 = 128 << 20;
+
+/// A durable reference in a native project. The account host resolves the digest in the
+/// current user's original store. The name keeps its suffix for FilmCraft's media opener.
+pub fn account_media_location(digest: &str, name: &str) -> Option<String> {
+    let path = format!("{ACCOUNT_MEDIA_PREFIX}{digest}/{name}");
+    account_media_parts(&path).map(|_| ())?;
+    Some(path)
+}
+
+pub fn account_media_parts(path: &str) -> Option<(&str, &str)> {
+    let (digest, name) = path.strip_prefix(ACCOUNT_MEDIA_PREFIX)?.split_once('/')?;
+    let digest_ok = digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    let name_ok =
+        !name.trim().is_empty() && name.len() <= 255 && !matches!(name, "." | "..") && !name.chars().any(|c| matches!(c, '/' | '\\') || c.is_control());
+    (digest_ok && name_ok).then_some((digest, name))
+}

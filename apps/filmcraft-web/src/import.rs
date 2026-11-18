@@ -16,7 +16,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-use crate::fs;
+use crate::{account::AccountView, account_port::AccountPort, fs};
 
 /// Run `f` on the UI thread (next frame) and wait for its result.
 pub async fn on_ui<T: 'static>(f: impl FnOnce(&mut crate::WebApp, &egui::Context) -> T + 'static) -> T {
@@ -36,7 +36,7 @@ fn be32(b: &[u8]) -> u64 {
 }
 
 /// Load what opening the file will read first: the container index.
-async fn prewarm(path: &str, size: u64) {
+pub(crate) async fn prewarm(path: &str, size: u64) {
     let head_len = size.min(64 << 10);
     fs::prefetch(path, 0, head_len).await;
     let Ok(head) = fs::WebServices.read_range(path, 0, head_len as usize) else { return };
@@ -106,24 +106,47 @@ async fn import_path(path: String, bin: u64) -> Result<Value, String> {
 /// Import browser files (no copies): returns `{items, errors, paths}`.
 pub async fn import_files(files: Vec<web_sys::File>) -> Value {
     // Capture once per batch: navigation while prewarming must not redirect pending imports.
-    let bin = on_ui(|w, _| w.app.import_bin().0).await;
+    let (bin, account) = on_ui(|w, _| {
+        let bin = w.app.import_bin().0;
+        let account = w.account.as_mut().map(AccountView::begin_media_import).transpose();
+        (bin, account)
+    })
+    .await;
+    let account = match account {
+        Ok(account) => account,
+        Err(error) => {
+            let status = error.clone();
+            crate::post(move |w, _| w.app.status(status));
+            return json!({"items":[],"errors":[error],"paths":[]});
+        }
+    };
     let mut items = Vec::new();
     let mut errors = Vec::new();
     let mut paths = Vec::new();
     for f in files {
-        let name = f.name();
         let size = f.size() as u64;
-        let path = fs::register_blob(&name, f.clone().into());
+        let path = match register_import(&f, account.as_ref()).await {
+            Ok(path) => path,
+            Err(error) => {
+                errors.push(json!(error));
+                continue;
+            }
+        };
         prewarm(&path, size).await;
         match import_path(path.clone(), bin).await {
             Ok(v) => {
                 items.extend(v.get("items").and_then(Value::as_array).cloned().unwrap_or_default());
                 errors.extend(v.get("errors").and_then(Value::as_array).cloned().unwrap_or_default());
-                crate::recovery::keep_media(&path, &f);
+                if account.is_none() {
+                    crate::recovery::keep_media(&path, &f);
+                }
             }
             Err(e) => errors.push(json!(e)),
         }
         paths.push(json!(path));
+    }
+    if account.is_some() {
+        finish_account_media().await;
     }
     if !errors.is_empty() {
         let msg = errors.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("; ");
@@ -132,8 +155,27 @@ pub async fn import_files(files: Vec<web_sys::File>) -> Value {
     json!({"items": items, "errors": errors, "paths": paths})
 }
 
+async fn register_import(file: &web_sys::File, account: Option<&AccountPort>) -> Result<String, String> {
+    match account {
+        Some(port) => crate::account::store_original(port, file).await,
+        None => Ok(fs::register_blob(&file.name(), file.clone().into())),
+    }
+}
+
+async fn finish_account_media() {
+    on_ui(|view, _| {
+        if let Some(account) = &mut view.account {
+            account.finish_media_import();
+        }
+    })
+    .await;
+}
+
 /// Open a `.fcproj` file picked or dropped by the user.
 pub async fn open_project_file(file: web_sys::File) -> Result<Value, String> {
+    if on_ui(|w, _| w.account.is_some()).await {
+        return Err("Upload the FilmCraft project in Files and open it from the account.".into());
+    }
     let buf = JsFuture::from(file.array_buffer()).await.map_err(|e| format!("{e:?}"))?;
     open_project_bytes(format!("/projects/{}", file.name()), js_sys::Uint8Array::new(&buf).to_vec()).await
 }
@@ -186,8 +228,29 @@ fn picked(files: Vec<web_sys::File>, relink: Option<RelinkHint>) {
     let Some(hint) = relink else { return take_files(files) };
     let Some(f) = files.into_iter().next() else { return };
     wasm_bindgen_futures::spawn_local(async move {
-        let path = fs::register_blob(&f.name(), f.clone().into());
-        crate::recovery::keep_media(&path, &f);
+        let account = on_ui(|view, _| view.account.as_mut().map(AccountView::begin_media_import).transpose()).await;
+        let account = match account {
+            Ok(account) => account,
+            Err(error) => {
+                crate::post(move |w, _| w.app.status(error));
+                return;
+            }
+        };
+        let path = match register_import(&f, account.as_ref()).await {
+            Ok(path) => path,
+            Err(error) => {
+                if account.is_some() {
+                    finish_account_media().await;
+                }
+                crate::post(move |w, _| w.app.status(error));
+                return;
+            }
+        };
+        if account.is_none() {
+            crate::recovery::keep_media(&path, &f);
+        } else {
+            prewarm(&path, f.size() as u64).await;
+        }
         let mut params = hint.params;
         if !params.is_object() {
             params = json!({});
@@ -195,6 +258,9 @@ fn picked(files: Vec<web_sys::File>, relink: Option<RelinkHint>) {
         params["path"] = json!(path);
         let command = hint.command;
         let outcome = on_ui(move |w, _| w.app.session.execute(&command, params).map_err(|e| e.to_string())).await;
+        if account.is_some() {
+            finish_account_media().await;
+        }
         crate::post(move |w, _| match outcome {
             Ok(v) => {
                 if let Some(n) = v.get("relinked").and_then(Value::as_array).map(Vec::len) {

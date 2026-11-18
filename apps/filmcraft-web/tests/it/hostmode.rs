@@ -55,3 +55,16 @@ fn a_project_over_256_mib_is_refused_before_it_would_be_copied() {
     assert!(open_size_ok(PROJECT_OPEN_MAX + 1), "media may still be that large, as a Blob");
     assert_eq!(PROJECT_OPEN_MAX >> 20, 256);
 }
+
+#[test]
+fn account_media_locations_accept_only_a_digest_and_a_single_media_name() {
+    let digest = "b".repeat(64);
+    let path = rules::account_media_location(&digest, "Original cut.mp4").unwrap();
+    assert_eq!(rules::account_media_parts(&path), Some((digest.as_str(), "Original cut.mp4")));
+    for name in ["", ".", "..", "../outside.mp4", "clip\\next.mp4", "line\n.mp4"] {
+        assert!(rules::account_media_location(&digest, name).is_none());
+    }
+    assert!(rules::account_media_location(&digest.to_uppercase(), "Original cut.mp4").is_none());
+    assert!(rules::account_media_parts("/files/Local.mp4").is_none());
+    assert!(rules::ACCOUNT_MEDIA_BYTES < rules::MAX_OPEN_BYTES);
+}
