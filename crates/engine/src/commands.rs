@@ -5324,6 +5324,74 @@ fn name_project(p: &mut filmcraft_project::Project, name: String) {
     p.name = name;
 }
 
+/// Exact native project awaiting a confirmed write to account storage.
+pub struct PreparedAccountSave {
+    project_instance: std::sync::Arc<()>,
+    revision: u64,
+    base_revision: u64,
+    write_generation: u64,
+    base_path: Option<String>,
+    path: String,
+    name: String,
+}
+
+impl Session {
+    /// Encode the editable project and its sequence view for an account write.
+    pub fn prepare_account_save(&self, path: &str) -> Result<(PreparedAccountSave, Vec<u8>)> {
+        if path.len() > 2048
+            || !path.to_ascii_lowercase().ends_with(".fcproj")
+            || path.split('/').any(|part| matches!(part, "" | "." | ".."))
+            || path.chars().any(|ch| ch == '\\' || ch.is_control())
+        {
+            return Err(EngineError::Other("Choose an account-relative .fcproj destination.".into()));
+        }
+        let name = project_name_for(path).ok_or_else(|| EngineError::Other("Choose a FilmCraft project name.".into()))?;
+        if self.path.as_deref() == Some(path) && self.loaded_schema < filmcraft_format::SCHEMA_VERSION {
+            return Err(EngineError::Other("Use Save As to preserve your original project before saving this upgraded copy.".into()));
+        }
+        let mut project = self.project.clone();
+        if project.name != name {
+            name_project(std::sync::Arc::make_mut(&mut project), name.clone());
+        }
+        let view = self.project_view();
+        let bytes = filmcraft_format::encode_with_view(&project, Some(&view), false);
+        if bytes.len() > 128 * 1024 * 1024 {
+            return Err(EngineError::Other("The FilmCraft project exceeds the WebOS project size limit.".into()));
+        }
+        Ok((
+            PreparedAccountSave {
+                project_instance: self.project_instance.clone(),
+                revision: self.revision,
+                base_revision: self.saved_revision,
+                write_generation: self.account_save_generation,
+                base_path: self.path.clone(),
+                path: path.to_string(),
+                name,
+            },
+            bytes,
+        ))
+    }
+
+    /// Bind the captured revision after storage confirms it, preserving any intervening edit.
+    pub fn adopt_account_save(&mut self, prepared: PreparedAccountSave) -> Result<()> {
+        if !std::sync::Arc::ptr_eq(&self.project_instance, &prepared.project_instance)
+            || self.account_save_generation != prepared.write_generation
+            || self.saved_revision != prepared.base_revision
+            || self.path != prepared.base_path
+        {
+            return Err(EngineError::Other("The confirmed save belongs to a different FilmCraft project revision.".into()));
+        }
+        if self.project.name != prepared.name {
+            name_project(std::sync::Arc::make_mut(&mut self.project), prepared.name);
+        }
+        self.path = Some(prepared.path);
+        self.saved_revision = prepared.revision;
+        self.account_save_generation = self.account_save_generation.wrapping_add(1);
+        self.loaded_schema = filmcraft_format::SCHEMA_VERSION;
+        Ok(())
+    }
+}
+
 fn write_project(s: &mut Session, path: &str, adopt: bool) -> Result<Value> {
     let t0 = web_time::Instant::now();
     // Save As renames the project after its new file (not an edit: no undo step, not dirty).

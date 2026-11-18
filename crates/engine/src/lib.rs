@@ -525,6 +525,7 @@ pub struct Session {
     /// owners) that belongs to the replaced document even if item ids are reused.
     pub document_epoch: u64,
     pub saved_revision: u64,
+    account_save_generation: u64,
     pub path: Option<String>,
     pub state: EditorState,
     pub media: Arc<MediaPool>,
@@ -648,6 +649,7 @@ impl Session {
             revision: 1,
             document_epoch: 0,
             saved_revision: 1,
+            account_save_generation: 0,
             path: None,
             state: EditorState {
                 snapping: true,

@@ -927,6 +927,36 @@ fn save_and_open_roundtrip() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+#[test]
+fn confirmed_account_save_preserves_a_newer_timeline_edit() {
+    let mut session = Session::default();
+    session.execute("file.newSequence", json!({"name":"Captured Cut"})).unwrap();
+    let (capture, bytes) = session.prepare_account_save("Video/Trailer.fcproj").unwrap();
+    let (older, _) = session.prepare_account_save("Video/Other.fcproj").unwrap();
+    assert!(session.path.is_none() && session.is_dirty());
+    let saved = filmcraft_format::decode(&bytes).unwrap();
+    assert_eq!(saved.project.name, "Trailer");
+    assert_eq!(saved.project.sequences().count(), 1);
+    assert!(saved.view.is_some());
+
+    session.execute("file.newSequence", json!({"name":"Newer Cut"})).unwrap();
+    session.adopt_account_save(capture).unwrap();
+    assert_eq!(session.path.as_deref(), Some("Video/Trailer.fcproj"));
+    assert_eq!(session.project.sequences().count(), 2);
+    assert!(session.is_dirty());
+    assert!(session.adopt_account_save(older).is_err());
+    assert!(session.prepare_account_save("../Trailer.fcproj").is_err());
+    assert!(session.prepare_account_save("Video/Trailer.xml").is_err());
+
+    let (next, _) = session.prepare_account_save("Video/Trailer.fcproj").unwrap();
+    session.adopt_account_save(next).unwrap();
+    assert!(!session.is_dirty());
+    let (prior_project, _) = session.prepare_account_save("Video/Old.fcproj").unwrap();
+    session.execute("file.newProject", json!({"name":"Replacement"})).unwrap();
+    assert!(session.adopt_account_save(prior_project).is_err());
+    assert_eq!(session.project.name, "Replacement");
+}
+
 /// Demo project with sync lock off on every track except V1/A1 (the A2 score spans every cut).
 fn demo_unlocked() -> Session {
     let mut s = demo();
