@@ -64,6 +64,42 @@ mod native_menu_tests {
         items.iter().find(|it| it.id == id).map(|it| it.enabled)
     }
 
+    #[test]
+    fn hosted_project_commands_wait_for_the_account_window() {
+        use crate::AccountProjectRequest as Request;
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let sink = sent.clone();
+        let mut app = FilmcraftApp::new(Session::default());
+        app.hooks.account_project = Some(Box::new(move |request| {
+            sink.borrow_mut().push(request);
+            Ok(())
+        }));
+        app.session.execute("file.newSequence", json!({"name":"Keep this edit"})).unwrap();
+        let ctx = egui::Context::default();
+        for command in ["file.saveAll", "file.saveAs", "file.saveCopy", "file.revert", "file.closeAllProjects"] {
+            menus::invoke(&mut app, &ctx, command, json!({})).unwrap();
+        }
+        menus::invoke_command(&mut app, &ctx, "file.open", json!({"path":"Video/Existing.fcproj"})).unwrap();
+        menus::activate_native(&mut app, &ctx, "file.newProject").unwrap();
+        menus::invoke(&mut app, &ctx, "file.close", json!({})).unwrap();
+        assert_eq!(
+            sent.borrow().as_slice(),
+            [
+                Request::Save,
+                Request::SaveAs,
+                Request::SaveCopy,
+                Request::Revert,
+                Request::Close,
+                Request::Open(Some("Video/Existing.fcproj".into())),
+                Request::New(json!({})),
+            ],
+        );
+        assert!(app.session.is_dirty());
+        assert!(app.session.path.is_none());
+        assert_eq!(app.session.project.sequences().count(), 1);
+        assert!(app.session.state.active_sequence.is_none());
+    }
+
     /// The native menu bar (macOS) gets the menu tree whenever it changes, so Edit ▸ Undo and Redo
     /// follow the history instead of staying enabled (#902).
     #[test]

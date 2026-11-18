@@ -208,6 +208,27 @@ pub(crate) fn menu_items_with_focus(app: &FilmcraftApp, ctx: &egui::Context) -> 
 
 /// Execute a UI or engine command by id.
 pub fn invoke_command(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params: Value) -> Result<Value, String> {
+    if let Some(handler) = app.hooks.account_project.as_mut() {
+        use crate::AccountProjectRequest as Request;
+        let request = match id {
+            "file.newProject" => Some(Request::New(params.clone())),
+            "file.openDemoProject" => Some(Request::New(json!({"demo":true}))),
+            "file.open" => Some(Request::Open(params.get("path").and_then(Value::as_str).map(str::to_string))),
+            "file.save" | "file.saveAll" => Some(Request::Save),
+            "file.saveAs" => Some(Request::SaveAs),
+            "file.saveCopy" => Some(Request::SaveCopy),
+            "file.revert" => Some(Request::Revert),
+            "file.closeProject" | "file.closeAllProjects" | "app.quit" => Some(Request::Close),
+            _ => None,
+        };
+        if let Some(request) = request {
+            let result = handler(request);
+            if let Err(error) = &result {
+                app.ui.status = error.clone();
+            }
+            return result.map(|()| Value::Null);
+        }
+    }
     // Select All / Deselect All act on the Project panel's items when it has focus (#168), only
     // what the shown bin lists (#456). Here and not in the key handling: on macOS the native menu
     // takes Cmd+A once Select All is enabled (a sequence is open) and sends the id here (#1752).
