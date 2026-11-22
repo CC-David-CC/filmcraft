@@ -9,6 +9,10 @@ pub(crate) fn narrow(width: f32) -> bool {
     width < 1000.0
 }
 
+pub(crate) fn monitor_controls(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::unique("compact-monitor-controls")).unwrap_or(false))
+}
+
 fn bar(ui: &mut Ui, rect: Rect, salt: &str) -> Ui {
     let mut child = ui.new_child(UiBuilder::new().id_salt(salt).max_rect(rect).layout(Layout::left_to_right(Align::Center)));
     child.set_clip_rect(rect.intersect(ui.clip_rect()));
@@ -63,6 +67,13 @@ pub(crate) fn edit(app: &mut FilmcraftApp, ui: &mut Ui, body: Rect) {
         }
     }
     row.menu_button(tl!("Panels"), |ui| {
+        if panel == PanelKind::Program {
+            let mut controls = monitor_controls(ui.ctx());
+            if ui.checkbox(&mut controls, tl!("Monitor controls")).changed() {
+                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("compact-monitor-controls"), controls));
+            }
+            ui.separator();
+        }
         egui::ScrollArea::vertical().max_height((body.height() * 0.65).max(72.0)).show(ui, |ui| {
             for candidate in PanelKind::ALL.into_iter().filter(|p| *p != PanelKind::Timeline) {
                 if ui.selectable_label(panel == candidate, crate::i18n::t(candidate.title())).clicked() {

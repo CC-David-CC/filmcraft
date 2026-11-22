@@ -220,7 +220,10 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
     let separate_source_drag = which == Which::Source && stacked_controls && rect.width() < 310.0;
     let source_drag_h = if separate_source_drag { 26.0 } else { 0.0 };
     let cinema = app.ui.fullscreen_program && which == Which::Program;
-    let (controls_h, pad) = if cinema { (0.0, 0.0) } else { (28.0 + 24.0 + 15.0 + 36.0 + if stacked_controls { 26.0 } else { 0.0 } + source_drag_h, 4.0) };
+    // The compact editor already provides transport, an editable timecode and a scrub ruler.
+    // Keep the picture large by default. Panels can reveal the second set of controls.
+    let compact_picture = which == Which::Program && crate::compact::narrow(ctx.content_rect().width()) && !crate::compact::monitor_controls(&ctx);
+    let (controls_h, pad) = if cinema || compact_picture { (0.0, 0.0) } else { (28.0 + 24.0 + 15.0 + 36.0 + if stacked_controls { 26.0 } else { 0.0 } + source_drag_h, 4.0) };
     let video_area = Rect::from_min_max(rect.min + vec2(pad, pad), pos2(rect.max.x - pad, rect.max.y - controls_h));
     // the Source monitor's time ruler starts at `origin` (a subclip restricted to its range)
     let mut origin = Tick::ZERO;
@@ -417,6 +420,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, which: Which)
         app.ui.status = name.clone();
     }
 
+    if compact_picture {
+        return;
+    }
     // ---- controls row: timecode | zoom | res | wrench | duration
     let dur_tc = format_time(mark_out.map(|o| o + rate.frame_duration()).unwrap_or(duration) - range_start, rate, drop_frame, time_display, 48000);
     let (bar, zoom_bar) = controls_row(app, ui, rect, which, time, rate, drop_frame, time_display, origin, &dur_tc);
