@@ -105,6 +105,7 @@ mod tests {
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(336.0, 715.0));
         let ctx = Context::default();
         let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
+        crate::theme::install(&ctx, &app.tokens);
         app.session.execute("file.newSequence", serde_json::json!({"name":"Cut"})).expect("new sequence");
         let dock = serde_json::to_value(&app.ui.dock).expect("original dock");
         ctx.run_ui(RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
