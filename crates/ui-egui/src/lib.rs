@@ -43,6 +43,7 @@ pub mod brand;
 pub mod calc;
 pub mod capture;
 mod cjk;
+mod compact;
 pub mod control;
 pub mod crash;
 pub mod credits;

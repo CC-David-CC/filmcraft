@@ -25,13 +25,17 @@ pub fn ruler_steps(frame_px: f64, base: i64) -> (i64, i64) {
 pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, seq: &Sequence, layout: &Layout, t: &Tokens, seq_id: ItemId) {
     let p = ui.painter().clone();
     let rate = seq.settings.frame_rate;
-    let hw = app.ui.timeline.header_w;
+    let hw = layout.content.min.x - rect.min.x;
+    let stacked = hw < 60.0;
     let ruler = layout.ruler;
     // background of the whole top block
     p.rect_filled(Rect::from_min_max(rect.min, pos2(rect.max.x, ruler.max.y)), 0.0, t.panel_bg);
     // current timecode: Premiere's big blue timecode
     let tc = format_time(app.session.playhead(), rate, seq.settings.drop_frame, seq.settings.display, seq.settings.sample_rate as i64);
-    let tc_rect = Rect::from_min_size(pos2(rect.min.x + 14.0, rect.min.y + 4.0), vec2(hw - 20.0, 20.0));
+    let tc_rect = Rect::from_min_size(
+        pos2(rect.min.x + if stacked { 5.0 } else { 14.0 }, rect.min.y + 4.0),
+        vec2(if stacked { 110.0 } else { hw - 20.0 }, if stacked { 32.0 } else { 20.0 }),
+    );
     let tc_id = egui::Id::unique(("timeline-tc", seq_id));
     match crate::widgets::timecode_field(
         ui,
@@ -55,8 +59,8 @@ pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, se
     }
     app.auto.add("timeline.timecode", tc_rect, &tc);
     // toolbar: 30 × 30 buttons, "on" = #4b4b4b fill
-    let mut x = rect.min.x + 12.0;
-    let y = rect.min.y + 26.0;
+    let mut x = if stacked { tc_rect.max.x + 4.0 } else { rect.min.x + 12.0 };
+    let y = rect.min.y + if stacked { 5.0 } else { 26.0 };
     let toggles: [(Icon, &str, bool, bool, &str); 6] = [
         (Icon::Nest, "nest", !app.session.state.sequences_as_clips, true, tl!("Insert and overwrite sequences as nests or individual clips")),
         (Icon::Magnet, "snap", app.session.state.snapping, true, tl!("Snap in Timeline (S)")),
@@ -66,6 +70,9 @@ pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, se
         (Icon::Wrench, "settings", false, false, tl!("Timeline Display Settings")),
     ];
     for (icon, key, on, toggle, tip) in toggles {
+        if stacked && !matches!(key, "snap" | "linked" | "settings") {
+            continue;
+        }
         let r = Rect::from_min_size(pos2(x, y), vec2(28.0, 28.0));
         let resp = ui.interact(r, egui::Id::unique(("tl-toggle", key)), Sense::click()).on_hover_text(tip);
         app.auto.add(&format!("timeline.toggle.{key}"), r, tip);

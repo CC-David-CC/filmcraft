@@ -300,9 +300,11 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         return;
     };
     let rate = seq.settings.frame_rate;
-    let header_w = app.ui.timeline.header_w;
-    let content = Rect::from_min_max(pos2(rect.min.x + header_w, rect.min.y + TOP_H), pos2(rect.max.x - SCROLLBAR_H, rect.max.y - SCROLLBAR_H));
-    let ruler = Rect::from_min_max(pos2(content.min.x, rect.min.y + TOP_H - RULER_H), pos2(content.max.x, rect.min.y + TOP_H));
+    let compact = rect.width() < 540.0 && crate::compact::narrow(ctx.content_rect().width());
+    let header_w = if compact { 48.0 } else { app.ui.timeline.header_w };
+    let top_h = if compact { RULER_H + 43.0 } else { TOP_H };
+    let content = Rect::from_min_max(pos2(rect.min.x + header_w, rect.min.y + top_h), pos2(rect.max.x - SCROLLBAR_H, rect.max.y - SCROLLBAR_H));
+    let ruler = Rect::from_min_max(pos2(content.min.x, rect.min.y + top_h - RULER_H), pos2(content.max.x, rect.min.y + top_h));
     app.last_timeline_width = content.width();
     let painter = ui.painter().clone();
     painter.rect_filled(rect, 0.0, t.panel_bg);
@@ -412,8 +414,9 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // master track
     let master = Rect::from_min_max(pos2(rect.min.x, tracks_area.max.y - MASTER_H), pos2(content.max.x, tracks_area.max.y));
     painter.rect_filled(master, 0.0, t.tl_header_bg);
-    painter.text(pos2(rect.min.x + 44.0, master.center().y), Align2::LEFT_CENTER, tl!("Mix"), Tokens::ui(11.5), t.text);
-    mix_volume(app, ui, seq, Rect::from_min_max(pos2(rect.min.x + header_w - 72.0, master.min.y + 6.0), pos2(rect.min.x + header_w - 8.0, master.max.y - 6.0)));
+    painter.text(pos2(rect.min.x + if compact { 5.0 } else { 44.0 }, master.center().y), Align2::LEFT_CENTER, tl!("Mix"), Tokens::ui(11.5), t.text);
+    let mix_end = if compact { content.min.x + 70.0 } else { content.min.x - 8.0 };
+    mix_volume(app, ui, seq, Rect::from_min_max(pos2(mix_end - 64.0, master.min.y + 6.0), pos2(mix_end, master.max.y - 6.0)));
 
     // ---- caption tracks
     if cap_n > 0 {

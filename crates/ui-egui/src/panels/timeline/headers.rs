@@ -37,7 +37,7 @@ fn patch_button(ui: &mut egui::Ui, button: PatchButton<'_>) -> egui::Response {
 /// Draw only the visible track headers, including colour label, targeting, lock and header controls clipped to each row.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, rows: &[Row], rect: Rect, vclip: Rect, aclip: Rect, t: &Tokens) {
-    let hw = app.ui.timeline.header_w;
+    let hw = rows.first().map_or(app.ui.timeline.header_w, |row| row.rect.min.x - rect.min.x);
     let tg = app.session.targeting();
     let mut actions: Vec<(String, Value)> = Vec::new();
     let mut vo_action = None;
@@ -64,6 +64,15 @@ pub(super) fn draw_headers(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequ
         // buttons so they win where they overlap; a right-click on one still opens the menu, since it
         // takes only the click. Automation ids `timeline.track.<V1|A1…>.menu.<item>`.
         track_header_popup(app, ui, visible, &label, r.track, r.kind == TrackKind::Video, &mut header_menu);
+        if hw < 60.0 {
+            let selected = tg.targeted.contains(&r.track);
+            let response = ui.put(visible, egui::Button::new(&label).selected(selected));
+            app.auto.add(&format!("timeline.track.{label}.target"), visible, &label);
+            if response.clicked() {
+                actions.push(("timeline.setTargeting".into(), json!({"track": r.track.0, "targeted": !selected})));
+            }
+            continue;
+        }
         // 0. colour label (#1186): a tint over the header, and the strip at its left edge, which
         // opens the colour menu
         let strip = Rect::from_min_max(hrect.min, pos2(hrect.min.x + 9.0, hrect.max.y));

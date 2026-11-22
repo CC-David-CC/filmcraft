@@ -1280,6 +1280,21 @@ pub fn menu_bar(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     }
 }
 
+/// The same registered commands, in a vertical menu for a narrow window.
+pub(crate) fn compact_menu(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("interface-language"), app.ui.language));
+    let items = menu_items_with_focus(app, ui.ctx());
+    let labels = app.session.prefs.labels.clone();
+    let mut clicked = None;
+    let items = items.iter().filter(|item| !item.path.is_empty()).collect::<Vec<_>>();
+    menu_level(ui, &items, 0, &mut clicked, &mut app.auto, &labels);
+    if let Some(id) = clicked
+        && let Err(error) = invoke(app, ui.ctx(), &id, json!({}))
+    {
+        app.ui.status = error;
+    }
+}
+
 /// Like a native menu bar (Windows, macOS): while one top-level menu is open, hovering another
 /// top-level title opens that menu instead (#1500). egui's `MenuBar` only switches on click.
 fn switch_on_hover(ctx: &egui::Context, titles: &[egui::Response]) {
