@@ -354,7 +354,6 @@ impl FilmcraftApp {
         });
         let hits = DockArea::<PanelKind>::hit_rects(&ctx, area_id());
         self.register_dock_hits(&hits);
-        panels::panel_menu_popup(self, ui);
     }
 
     /// The Timeline's tabs stand for its open sequences: a close from the dock area (a tab's

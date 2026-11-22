@@ -135,7 +135,15 @@ pub(super) fn draw_top(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect, se
         clip.line_segment([pos2(x, tick_base - h), pos2(x, tick_base)], Stroke::new(1.0, t.tl_ruler_tick));
         if major {
             let label = format_time(rate.tick_of(f), rate, seq.settings.drop_frame, seq.settings.display, 48000);
-            clip.text(pos2(x + 1.0, label_y), Align2::CENTER_CENTER, label, Tokens::ui(11.0), t.tl_ruler_text);
+            if stacked {
+                let galley = p.layout_no_wrap(label, Tokens::ui(11.0), t.tl_ruler_text);
+                let left = (x + 1.0).max(ruler.left());
+                if x >= ruler.left() - 1.0 && left + galley.size().x <= ruler.right() {
+                    clip.galley(pos2(left, label_y - galley.size().y * 0.5), galley, t.tl_ruler_text);
+                }
+            } else {
+                clip.text(pos2(x + 1.0, label_y), Align2::CENTER_CENTER, label, Tokens::ui(11.0), t.tl_ruler_text);
+            }
         }
         f += minor;
     }
